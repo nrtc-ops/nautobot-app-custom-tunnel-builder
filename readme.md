@@ -1,5 +1,7 @@
 # nautobot-app-custom-tunnel-builder
 
+[![Build and Upload to PyPi](https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder/actions/workflows/pypi-workflow.yml/badge.svg)](https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder/actions/workflows/pypi-workflow.yml)
+
 A **Nautobot 3.x app** that provides a custom web form for building **policy-based IPsec tunnels** (IKEv1 or IKEv2) on Cisco IOS-XE devices (CSR 1000v, ASR 1000, ISR 4000).
 
 Operators fill out the form, click **Build Tunnel**, and a Nautobot Job SSHes into the target device, generates and pushes the full crypto map–based IPsec configuration, then saves the running config — all without leaving the browser.
