@@ -1,6 +1,6 @@
 """Nautobot Custom Tunnel Builder App."""
 
-__version__ = "0.2.2"
+__version__ = "0.2.3-alpha"
 
 from nautobot.apps import NautobotAppConfig
 
