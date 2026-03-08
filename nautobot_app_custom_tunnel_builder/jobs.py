@@ -4,7 +4,7 @@ import ipaddress
 import logging
 import traceback
 
-from nautobot.extras.jobs import Job, ObjectVar, StringVar, IntegerVar, ChoiceVar
+from nautobot.apps.jobs import Job, ObjectVar, StringVar, IntegerVar, ChoiceVar
 from nautobot.dcim.models import Device
 
 logger = logging.getLogger(__name__)
