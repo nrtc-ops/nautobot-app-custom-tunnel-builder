@@ -1,7 +1,12 @@
 """Nautobot Custom Tunnel Builder App."""
 
-__version__ = "0.2.3a1"
+from importlib.metadata import PackageNotFoundError, version as get_version
 
+try:
+    __version__ = get_version("nautobot_app_custom_tunnel_builder")
+except PackageNotFoundError:
+    # Fallback version when package metadata is unavailable (e.g., running from source)
+    __version__ = "0.0.0"
 from nautobot.apps import NautobotAppConfig
 
 
