@@ -9,6 +9,8 @@ from nautobot.dcim.models import Device
 
 logger = logging.getLogger(__name__)
 
+name = "NRTC Tunnel Builders"
+
 # ---------------------------------------------------------------------------
 # Choices — must mirror forms.py so the Job can also be run from the
 # Nautobot Jobs UI directly.
