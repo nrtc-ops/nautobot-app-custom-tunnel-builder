@@ -333,10 +333,10 @@ class IpsecTunnelForm(forms.Form):
             return value
         try:
             net = ipaddress.IPv4Network(value, strict=False)
-        except ValueError:
+        except ValueError as err:
             raise forms.ValidationError(
                 "Enter a valid IPv4 network in CIDR notation, e.g. 192.168.1.0/24."
-            )
+            ) from err
         return str(net)
 
     def clean_local_network(self):
