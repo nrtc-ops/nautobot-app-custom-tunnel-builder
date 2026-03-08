@@ -25,7 +25,7 @@ pip install -e .
 ### From a wheel/tarball (production)
 
 ```bash
-pip install nautobot-custom-tunnel-builder-0.1.0-py3-none-any.whl
+pip install nautobot-app-custom-tunnel-builder-0.1.0-py3-none-any.whl
 ```
 
 ---
@@ -36,7 +36,7 @@ Add the app to `PLUGINS` in your `nautobot_config.py`:
 
 ```python
 PLUGINS = [
-    "nautobot_custom_tunnel_builder",
+    "nautobot_app_custom_tunnel_builder",
 ]
 ```
 
@@ -44,7 +44,7 @@ Optional — override default settings (see [Configuration](configuration.md)):
 
 ```python
 PLUGINS_CONFIG = {
-    "nautobot_custom_tunnel_builder": {
+    "nautobot_app_custom_tunnel_builder": {
         "device_ssh_port": 22,
         "connection_timeout": 30,
     }
