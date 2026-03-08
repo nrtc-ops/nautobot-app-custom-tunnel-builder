@@ -26,6 +26,8 @@ class NautobotCustomTunnelBuilderConfig(NautobotAppConfig):
     def ready(self):
         """App ready hook."""
         super().ready()
+        # Explicitly import jobs so Nautobot registers them during migrate.
+        from . import jobs  # noqa: F401
 
 
 config = NautobotCustomTunnelBuilderConfig
