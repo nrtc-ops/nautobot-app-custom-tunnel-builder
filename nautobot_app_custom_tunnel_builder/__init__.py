@@ -5,12 +5,12 @@ __version__ = "0.2.1"
 from nautobot.apps import NautobotAppConfig
 
 
-class NautobotCustomTunnelBuilderConfig(NautobotAppConfig):
+class NautobotAppCustomTunnelBuilderConfig(NautobotAppConfig):
     """Nautobot app configuration for Custom Tunnel Builder."""
 
-    name = "nautobot_custom_tunnel_builder"
+    name = "nautobot_app_custom_tunnel_builder"
     verbose_name = "Custom Tunnel Builder"
-    description = "Build IKEv2 VTI IPsec tunnels on Cisco IOS-XE devices."
+    description = "Build policy-based IPsec tunnels (IKEv1/IKEv2) on Cisco IOS-XE devices."
     version = __version__
     author = "NRTC Ops"
     author_email = ""
@@ -30,4 +30,4 @@ class NautobotCustomTunnelBuilderConfig(NautobotAppConfig):
         from . import jobs  # noqa: F401
 
 
-config = NautobotCustomTunnelBuilderConfig
+config = NautobotAppCustomTunnelBuilderConfig
