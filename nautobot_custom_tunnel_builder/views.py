@@ -51,12 +51,15 @@ class IpsecTunnelBuilderView(LoginRequiredMixin, PermissionRequiredMixin, View):
 
         # Locate the registered job model in the database.
         try:
-            job_model = JobModel.objects.get(job_class_name="BuildIpsecTunnel")
+            job_model = JobModel.objects.get(
+                module_name="nautobot_custom_tunnel_builder.jobs",
+                job_class_name="BuildIpsecTunnel",
+            )
         except JobModel.DoesNotExist:
             messages.error(
                 request,
                 "Job 'BuildIpsecTunnel' is not registered. "
-                "Make sure the app is installed and 'nautobot-server migrate' has been run.",
+                "Run 'nautobot-server migrate' and ensure the job is enabled under Jobs in the UI.",
             )
             return render(request, self.template_name, self._ctx(form))
 
