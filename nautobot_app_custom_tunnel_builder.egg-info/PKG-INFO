@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: nautobot-app-custom-tunnel-builder
-Version: 0.2.1
+Version: 0.2.2
 Summary: Nautobot app to build IPsec tunnels on Cisco IOS-XE devices
 Author: NRTC Ops
 License: Apache-2.0
