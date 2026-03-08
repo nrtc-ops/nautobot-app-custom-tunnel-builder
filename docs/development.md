@@ -3,7 +3,7 @@
 ## Project Structure
 
 ```
-nautobot-custom-views/
+nautobot-app-custom-tunnel-builder/
 ├── pyproject.toml                              # Package metadata and build config
 ├── requirements.txt                            # Runtime dependencies
 ├── docs/                                       # This documentation
@@ -13,7 +13,7 @@ nautobot-custom-views/
 │   ├── usage.md
 │   ├── iosxe-config.md
 │   └── development.md
-└── nautobot_ipsec_builder/                     # Python package
+└── nautobot_custom_tunnel_builder/             # Python package
     ├── __init__.py                             # NautobotAppConfig
     ├── forms.py                                # Django form
     ├── jobs.py                                 # Nautobot Job + config builder
@@ -21,7 +21,7 @@ nautobot-custom-views/
     ├── urls.py                                 # URL routing
     ├── views.py                                # Custom CBV
     └── templates/
-        └── nautobot_ipsec_builder/
+        └── nautobot_custom_tunnel_builder/
             └── ipsec_tunnel_form.html          # Bootstrap 5 form template
 ```
 
@@ -32,8 +32,8 @@ nautobot-custom-views/
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/nrtc-ops/nautobot-custom-views.git
-cd nautobot-custom-views
+git clone https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder.git
+cd nautobot-app-custom-tunnel-builder
 ```
 
 ### 2. Create a virtual environment
@@ -66,14 +66,14 @@ Make sure the app is listed in `PLUGINS` in that config file.
 
 ### `__init__.py` — App Registration
 
-Defines `NautobotIpsecBuilderConfig(NautobotAppConfig)`.  This is the Django AppConfig subclass Nautobot discovers when `nautobot_ipsec_builder` is in `PLUGINS`.
+Defines `NautobotCustomTunnelBuilderConfig(NautobotAppConfig)`. This is the Django AppConfig subclass Nautobot discovers when `nautobot_custom_tunnel_builder` is in `PLUGINS`.
 
 Key attributes:
 
-| Attribute | Value |
-|-----------|-------|
-| `base_url` | `ipsec-builder` — the URL prefix under `/plugins/` |
-| `default_settings` | Defines `device_ssh_port` and `connection_timeout` |
+| Attribute          | Value                                               |
+| ------------------ | --------------------------------------------------- |
+| `base_url`         | `tunnel-builder` — the URL prefix under `/plugins/` |
+| `default_settings` | Defines `device_ssh_port` and `connection_timeout`  |
 
 ---
 
@@ -111,7 +111,7 @@ Two distinct responsibilities:
 A pure function that takes a dict of parameters and returns an ordered list of IOS-XE CLI commands. It is deliberately decoupled from Nautobot and Netmiko so it can be unit-tested independently.
 
 ```python
-from nautobot_ipsec_builder.jobs import build_iosxe_ipsec_config
+from nautobot_custom_tunnel_builder.jobs import build_iosxe_ipsec_config
 
 cmds = build_iosxe_ipsec_config({
     "tunnel_number": 100,
@@ -158,7 +158,7 @@ If the job isn't registered (e.g., migration hasn't been run), the view shows a 
 
 ### `navigation.py`
 
-Adds the form to Nautobot's navigation under **Network Tools → VPN**.  Items are only visible to users with `extras.run_job`.
+Adds the form to Nautobot's navigation under **Network Tools → VPN**. Items are only visible to users with `extras.run_job`.
 
 To move the link to a different nav tab, change the `NavMenuTab(name=...)` value.
 
@@ -169,23 +169,28 @@ To move the link to a different nav tab, change the `NavMenuTab(name=...)` value
 Single route:
 
 ```
-/plugins/ipsec-builder/  →  IpsecTunnelBuilderView
+/plugins/tunnel-builder/  →  IpsecTunnelBuilderView
 ```
 
-The `base_url = "ipsec-builder"` in `__init__.py` controls the `/plugins/<base_url>/` prefix.
+The `base_url = "tunnel-builder"` in `__init__.py` controls the `/plugins/<base_url>/` prefix.
 
 ---
 
-### `templates/nautobot_ipsec_builder/ipsec_tunnel_form.html`
+### `templates/nautobot_custom_tunnel_builder/ipsec_tunnel_form.html`
 
 Extends Nautobot's `base.html`. Uses Bootstrap 5 (already included in Nautobot 3.x).
 
 The form is split into visual **cards** by concern:
+
 1. Target Device
-2. Tunnel Interface
-3. IKEv2 Settings
-4. IPsec Settings
-5. Authentication
+2. IKE Version & Remote Peer
+3. Interesting Traffic (Crypto ACL)
+4. Crypto Map
+5. Shared IKE Parameters
+6. IKEv1 Settings (shown when IKEv1 selected)
+7. IKEv2 Settings (shown when IKEv2 selected)
+8. IPsec Phase 2 Settings
+9. Authentication
 
 A sticky sidebar on medium+ screens explains what config will be pushed.
 
@@ -229,10 +234,10 @@ Tests are located in `tests/` (not yet scaffolded). Key things to test:
 
 ```bash
 # Format
-black nautobot_ipsec_builder/
+black nautobot_custom_tunnel_builder/
 
 # Lint
-flake8 nautobot_ipsec_builder/
+flake8 nautobot_custom_tunnel_builder/
 ```
 
 Max line length is 120 characters (configure in `setup.cfg` or `pyproject.toml` as needed).

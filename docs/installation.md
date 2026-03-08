@@ -3,10 +3,10 @@
 ## Prerequisites
 
 | Requirement | Version |
-|------------|---------|
-| Python | 3.11+ |
-| Nautobot | 3.0.0+ |
-| Netmiko | 4.0.0+ |
+| ----------- | ------- |
+| Python      | 3.11+   |
+| Nautobot    | 3.0.0+  |
+| Netmiko     | 4.0.0+  |
 
 Nautobot must already be installed and operational before installing this app.
 
@@ -17,15 +17,15 @@ Nautobot must already be installed and operational before installing this app.
 ### From source (development)
 
 ```bash
-git clone https://github.com/nrtc-ops/nautobot-custom-views.git
-cd nautobot-custom-views
+git clone https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder.git
+cd nautobot-app-custom-tunnel-builder
 pip install -e .
 ```
 
 ### From a wheel/tarball (production)
 
 ```bash
-pip install nautobot-ipsec-builder-0.1.0-py3-none-any.whl
+pip install nautobot-custom-tunnel-builder-0.1.0-py3-none-any.whl
 ```
 
 ---
@@ -36,7 +36,7 @@ Add the app to `PLUGINS` in your `nautobot_config.py`:
 
 ```python
 PLUGINS = [
-    "nautobot_ipsec_builder",
+    "nautobot_custom_tunnel_builder",
 ]
 ```
 
@@ -44,7 +44,7 @@ Optional — override default settings (see [Configuration](configuration.md)):
 
 ```python
 PLUGINS_CONFIG = {
-    "nautobot_ipsec_builder": {
+    "nautobot_custom_tunnel_builder": {
         "device_ssh_port": 22,
         "connection_timeout": 30,
     }

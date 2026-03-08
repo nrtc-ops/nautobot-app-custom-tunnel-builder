@@ -6,17 +6,17 @@ The following settings can be overridden in `nautobot_config.py` under `PLUGINS_
 
 ```python
 PLUGINS_CONFIG = {
-    "nautobot_ipsec_builder": {
+    "nautobot_custom_tunnel_builder": {
         "device_ssh_port": 22,
         "connection_timeout": 30,
     }
 }
 ```
 
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `device_ssh_port` | `int` | `22` | Default SSH port used to connect to devices. Can be overridden per-job via the `NAUTOBOT_DEVICE_SSH_PORT` environment variable. |
-| `connection_timeout` | `int` | `30` | Netmiko connection timeout in seconds. |
+| Setting              | Type  | Default | Description                                                                                                                     |
+| -------------------- | ----- | ------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `device_ssh_port`    | `int` | `22`    | Default SSH port used to connect to devices. Can be overridden per-job via the `NAUTOBOT_DEVICE_SSH_PORT` environment variable. |
+| `connection_timeout` | `int` | `30`    | Netmiko connection timeout in seconds.                                                                                          |
 
 ---
 
@@ -24,12 +24,12 @@ PLUGINS_CONFIG = {
 
 Device credentials are **never stored in Nautobot**. They are read from the environment at job execution time.
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `NAUTOBOT_DEVICE_USERNAME` | Yes | `admin` | SSH username for device login. |
-| `NAUTOBOT_DEVICE_PASSWORD` | Yes | _(empty)_ | SSH password for device login. |
-| `NAUTOBOT_DEVICE_ENABLE_SECRET` | No | _(empty)_ | Enable-mode secret. Required if the device prompts for `enable`. |
-| `NAUTOBOT_DEVICE_SSH_PORT` | No | `22` | SSH port. Useful for non-standard port environments. |
+| Variable                        | Required | Default   | Description                                                      |
+| ------------------------------- | -------- | --------- | ---------------------------------------------------------------- |
+| `NAUTOBOT_DEVICE_USERNAME`      | Yes      | `admin`   | SSH username for device login.                                   |
+| `NAUTOBOT_DEVICE_PASSWORD`      | Yes      | _(empty)_ | SSH password for device login.                                   |
+| `NAUTOBOT_DEVICE_ENABLE_SECRET` | No       | _(empty)_ | Enable-mode secret. Required if the device prompts for `enable`. |
+| `NAUTOBOT_DEVICE_SSH_PORT`      | No       | `22`      | SSH port. Useful for non-standard port environments.             |
 
 ### Setting variables in systemd
 

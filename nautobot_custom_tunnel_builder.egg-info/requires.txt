@@ -1,0 +1,11 @@
+build>=1.4.0
+nautobot<4.0.0,>=3.0.0
+netmiko>=4.0.0
+pip>=26.0.1
+twine>=6.2.0
+
+[dev]
+pytest
+pytest-django
+black
+flake8

@@ -1,4 +1,4 @@
-"""Views for the IPsec Tunnel Builder app."""
+"""Views for the Custom Tunnel Builder app."""
 
 import logging
 
@@ -14,7 +14,7 @@ from .forms import IpsecTunnelForm
 logger = logging.getLogger(__name__)
 
 # Full dotted class-path Nautobot uses to look up the registered job.
-JOB_CLASS_PATH = "nautobot_ipsec_builder.jobs.BuildIpsecTunnel"
+JOB_CLASS_PATH = "nautobot_custom_tunnel_builder.jobs.BuildIpsecTunnel"
 
 
 class IpsecTunnelBuilderView(LoginRequiredMixin, PermissionRequiredMixin, View):
@@ -26,7 +26,7 @@ class IpsecTunnelBuilderView(LoginRequiredMixin, PermissionRequiredMixin, View):
     """
 
     permission_required = "extras.run_job"
-    template_name = "nautobot_ipsec_builder/ipsec_tunnel_form.html"
+    template_name = "nautobot_custom_tunnel_builder/ipsec_tunnel_form.html"
 
     # ------------------------------------------------------------------
     # GET – render empty form
@@ -63,24 +63,30 @@ class IpsecTunnelBuilderView(LoginRequiredMixin, PermissionRequiredMixin, View):
         # Build the kwargs the Job.run() method expects.
         job_kwargs = {
             "device": data["device"],
-            "tunnel_number": data["tunnel_number"],
-            "tunnel_source_interface": data["tunnel_source_interface"],
-            "tunnel_ip_address": data["tunnel_ip_address"],
+            "ike_version": data["ike_version"],
             "remote_peer_ip": data["remote_peer_ip"],
-            "ikev2_proposal_name": data["ikev2_proposal_name"],
-            "ikev2_policy_name": data["ikev2_policy_name"],
-            "ikev2_keyring_name": data["ikev2_keyring_name"],
-            "ikev2_profile_name": data["ikev2_profile_name"],
-            "ike_encryption": data["ike_encryption"],
-            "ike_integrity": data["ike_integrity"],
+            "local_network": data["local_network"],
+            "remote_network": data["remote_network"],
+            "crypto_acl_name": data["crypto_acl_name"],
+            "wan_interface": data["wan_interface"],
+            "crypto_map_name": data["crypto_map_name"],
+            "crypto_map_sequence": data["crypto_map_sequence"],
             "ike_dh_group": data["ike_dh_group"],
             "ike_lifetime": data["ike_lifetime"],
+            "isakmp_policy_priority": data.get("isakmp_policy_priority"),
+            "ikev1_encryption": data.get("ikev1_encryption", ""),
+            "ikev1_hash": data.get("ikev1_hash", ""),
+            "ikev2_proposal_name": data.get("ikev2_proposal_name", ""),
+            "ikev2_policy_name": data.get("ikev2_policy_name", ""),
+            "ikev2_keyring_name": data.get("ikev2_keyring_name", ""),
+            "ikev2_profile_name": data.get("ikev2_profile_name", ""),
+            "ikev2_encryption": data.get("ikev2_encryption", ""),
+            "ikev2_integrity": data.get("ikev2_integrity", ""),
+            "pre_shared_key": data["pre_shared_key"],
             "ipsec_transform_set_name": data["ipsec_transform_set_name"],
-            "ipsec_profile_name": data["ipsec_profile_name"],
             "ipsec_encryption": data["ipsec_encryption"],
             "ipsec_integrity": data["ipsec_integrity"],
             "ipsec_lifetime": data["ipsec_lifetime"],
-            "pre_shared_key": data["pre_shared_key"],
         }
 
         try:
@@ -96,7 +102,7 @@ class IpsecTunnelBuilderView(LoginRequiredMixin, PermissionRequiredMixin, View):
 
         messages.success(
             request,
-            f"IPsec tunnel job queued for {data['device']}. "
+            f"{data['ike_version'].upper()} IPsec tunnel job queued for {data['device']}. "
             "Track progress in the job result below.",
         )
         return redirect(job_result.get_absolute_url())

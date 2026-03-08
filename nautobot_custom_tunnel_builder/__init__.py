@@ -1,20 +1,20 @@
-"""Nautobot IPsec Tunnel Builder App."""
+"""Nautobot Custom Tunnel Builder App."""
 
 __version__ = "0.1.0"
 
 from nautobot.apps import NautobotAppConfig
 
 
-class NautobotIpsecBuilderConfig(NautobotAppConfig):
-    """Nautobot app configuration for IPsec Tunnel Builder."""
+class NautobotCustomTunnelBuilderConfig(NautobotAppConfig):
+    """Nautobot app configuration for Custom Tunnel Builder."""
 
-    name = "nautobot_ipsec_builder"
-    verbose_name = "IPsec Tunnel Builder"
+    name = "nautobot_custom_tunnel_builder"
+    verbose_name = "Custom Tunnel Builder"
     description = "Build IKEv2 VTI IPsec tunnels on Cisco IOS-XE devices."
     version = __version__
     author = "NRTC Ops"
     author_email = ""
-    base_url = "ipsec-builder"
+    base_url = "tunnel-builder"
     required_settings = []
     default_settings = {
         # Default SSH port for device connections
@@ -28,4 +28,4 @@ class NautobotIpsecBuilderConfig(NautobotAppConfig):
         super().ready()
 
 
-config = NautobotIpsecBuilderConfig
+config = NautobotCustomTunnelBuilderConfig

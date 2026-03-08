@@ -1,17 +1,20 @@
-# nautobot-ipsec-builder
+# nautobot-app-custom-tunnel-builder
 
-A **Nautobot 3.x app** that provides a custom web form for building **IKEv2 Virtual Tunnel Interface (VTI) IPsec tunnels** on Cisco IOS-XE devices (CSR 1000v, ASR 1000, ISR 4000).
+A **Nautobot 3.x app** that provides a custom web form for building **policy-based IPsec tunnels** (IKEv1 or IKEv2) on Cisco IOS-XE devices (CSR 1000v, ASR 1000, ISR 4000).
 
-Operators fill out the form, click **Build Tunnel**, and a Nautobot Job SSHes into the target device, generates and pushes the full IKEv2 + IPsec VTI configuration, then saves the running config — all without leaving the browser.
+Operators fill out the form, click **Build Tunnel**, and a Nautobot Job SSHes into the target device, generates and pushes the full crypto map–based IPsec configuration, then saves the running config — all without leaving the browser.
 
 ---
 
 ## Features
 
-- Custom Nautobot form at `/plugins/ipsec-builder/`
-- Full **IKEv2 VTI** configuration (proposal → policy → keyring → profile → transform-set → ipsec-profile → tunnel interface)
-- Algorithm choices: AES-CBC-128/256, AES-GCM-128/256, SHA-256/384/512, DH groups 14/19/20/21
-- Form-level validation including CIDR parsing and GCM ↔ HMAC cross-field enforcement
+- Custom Nautobot form at `/plugins/tunnel-builder/`
+- **Policy-based** IPsec using crypto maps and crypto ACLs
+- **IKEv2** support: proposal → policy → keyring → profile → transform-set → crypto map
+- **IKEv1** support: ISAKMP policy + pre-shared key → transform-set → crypto map
+- Algorithm choices: AES-128/192/256, AES-GCM-128/256 (IKEv2), SHA-1/256/384/512, MD5, DH groups 2/5/14/19/20/21
+- IKE version toggle with live show/hide of version-specific form sections
+- Form-level validation including CIDR network parsing and GCM ↔ HMAC cross-field enforcement
 - Nautobot Job (`BuildIpsecTunnel`) runnable from both the custom form and the Jobs UI
 - SSH via [Netmiko](https://github.com/ktbyers/netmiko) — no RESTCONF or NETCONF required
 - PSK redacted from all job logs
@@ -41,7 +44,7 @@ pip install -e .
 ### 2. Add to `nautobot_config.py`
 
 ```python
-PLUGINS = ["nautobot_ipsec_builder"]
+PLUGINS = ["nautobot_custom_tunnel_builder"]
 ```
 
 ### 3. Migrate and collect static
@@ -83,20 +86,33 @@ Browser → Custom Form (views.py)
          Cisco IOS-XE Device
 ```
 
-1. **`forms.py`** — A Django form collects all IKEv2 and IPsec parameters and validates them (CIDR, algorithm compatibility).
-2. **`views.py`** — A class-based view renders the form on GET and enqueues the `BuildIpsecTunnel` Job on a valid POST, then redirects to the Job Result page.
-3. **`jobs.py`** — The Job generates ordered IOS-XE CLI commands via `build_iosxe_ipsec_config()`, then connects to the device with Netmiko, pushes the config, and saves it.
+1. **`forms.py`** — Collects IKE version, peer info, interesting-traffic networks, crypto map settings, and IKE/IPsec parameters. Validates CIDRs, enforces IKEv2-only DH group restrictions, and rejects invalid GCM ↔ HMAC combinations.
+2. **`views.py`** — Renders the form on GET; enqueues the `BuildIpsecTunnel` Job on valid POST, then redirects to the Job Result page.
+3. **`jobs.py`** — `build_iosxe_policy_config()` generates ordered CLI commands; the Job connects with Netmiko, pushes config, and saves it.
 
-### IOS-XE configuration blocks pushed (in order)
+### IOS-XE configuration blocks pushed (IKEv2)
 
 ```
-crypto ikev2 proposal    →  IKEv2 algorithms
+crypto ikev2 proposal    →  Phase 1 algorithms
 crypto ikev2 policy      →  links proposal
 crypto ikev2 keyring     →  per-peer PSK
 crypto ikev2 profile     →  match + auth + keyring + lifetime
+ip access-list extended  →  interesting traffic (crypto ACL)
 crypto ipsec transform-set  →  Phase 2 ciphers
-crypto ipsec profile     →  links transform-set + ikev2 profile
-interface Tunnel<N>      →  VTI with tunnel protection
+crypto map               →  links transform-set + ikev2 profile + ACL
+interface <WAN>          →  crypto map applied
+copy running-config startup-config
+```
+
+### IOS-XE configuration blocks pushed (IKEv1)
+
+```
+crypto isakmp policy     →  Phase 1 algorithms + DH group
+crypto isakmp key        →  pre-shared key per peer
+ip access-list extended  →  interesting traffic (crypto ACL)
+crypto ipsec transform-set  →  Phase 2 ciphers
+crypto map               →  links transform-set + ACL + peer
+interface <WAN>          →  crypto map applied
 copy running-config startup-config
 ```
 
@@ -105,7 +121,7 @@ copy running-config startup-config
 ## Project Layout
 
 ```
-nautobot-custom-views/
+nautobot-app-custom-tunnel-builder/
 ├── pyproject.toml
 ├── requirements.txt
 ├── README.md
@@ -116,15 +132,15 @@ nautobot-custom-views/
 │   ├── usage.md             # Form fields, job result, failure scenarios
 │   ├── iosxe-config.md      # Full IOS-XE config template + worked example
 │   └── development.md       # Code map, adding features, testing
-└── nautobot_ipsec_builder/
+└── nautobot_custom_tunnel_builder/
     ├── __init__.py           # NautobotAppConfig
     ├── forms.py              # IpsecTunnelForm
-    ├── jobs.py               # BuildIpsecTunnel Job
+    ├── jobs.py               # BuildIpsecTunnel Job + config builder
     ├── navigation.py         # Nav menu
     ├── urls.py               # URL routing
     ├── views.py              # IpsecTunnelBuilderView
     └── templates/
-        └── nautobot_ipsec_builder/
+        └── nautobot_custom_tunnel_builder/
             └── ipsec_tunnel_form.html
 ```
 
@@ -137,7 +153,7 @@ Devices must be registered in Nautobot with:
 - **Platform** → `network_driver` set to `cisco_ios` or `cisco_xe`
 - **Primary IPv4 address** set (used as the SSH target)
 
-IOS-XE version **15.4+** is required for `crypto ikev2` support.
+IOS-XE version **12.4(20)T+** supports IKEv1 crypto maps. Version **15.2(1)S+** is required for `crypto ikev2` support.
 
 ---
 
@@ -153,7 +169,7 @@ Full documentation is in the [`docs/`](docs/) folder:
 
 | Doc | Contents |
 |-----|----------|
-| [Overview](docs/overview.md) | Architecture diagram, component table, why IKEv2 VTI |
+| [Overview](docs/overview.md) | Architecture diagram, component table, policy-based vs VTI |
 | [Installation](docs/installation.md) | Install steps, device prep, service restart |
 | [Configuration](docs/configuration.md) | App settings, env vars, SecretsGroup integration, permissions |
 | [Usage](docs/usage.md) | Every form field explained, job result walkthrough, failure scenarios |
