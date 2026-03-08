@@ -4,7 +4,7 @@ import ipaddress
 import logging
 import traceback
 
-from nautobot.apps.jobs import Job, ObjectVar, StringVar, IntegerVar, ChoiceVar
+from nautobot.apps.jobs import Job, register_jobs, ObjectVar, StringVar, IntegerVar, ChoiceVar
 from nautobot.dcim.models import Device
 
 logger = logging.getLogger(__name__)
@@ -559,3 +559,6 @@ class BuildIpsecTunnel(Job):
             f"{ike_version.upper()} policy-based IPsec tunnel to {remote_peer_ip} "
             f"configured on {device.name} ({mgmt_ip})."
         )
+
+
+register_jobs(BuildIpsecTunnel)
