@@ -71,6 +71,8 @@ Key adaptations from the cookiecutter template:
 - Python `>=3.11,<3.14` (match current project's 3.11 minimum)
 - Add `[tool.poetry]` section with `packages` config pointing to `nautobot_custom_tunnel_builder`
 
+*We want to make sure that we keep uv related info in the pyproject.toml, and use as much we can in the project table for poetry.
+
 **Step 2: Verify syntax**
 
 ```bash

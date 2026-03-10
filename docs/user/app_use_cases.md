@@ -158,17 +158,6 @@ show interfaces Tunnel100
 show crypto ikev2 profile IKEv2-PROFILE
 ```
 
-Expected output for an established tunnel (`show crypto ikev2 sa`):
-
-```
- IPv4 Crypto IKEv2  SA
-
-Tunnel-id Local                 Remote                fvrf/ivrf            Status
-1         10.0.0.1/4500         203.0.113.1/4500      none/none            READY
-      Encr: AES-CBC, keysize: 256, PRF: SHA256, Hash: SHA256, DH Grp:19, Auth sign: PSK, Auth verify: PSK
-      Life/Active Time: 86400/142 sec
-```
-
 ---
 
 ## Encryption Algorithm Reference
