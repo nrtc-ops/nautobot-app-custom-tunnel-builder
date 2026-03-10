@@ -1,16 +1,24 @@
-[tool.poetry]
+[project]
 name = "nautobot-custom-tunnel-builder"
 version = "0.2.3a1"
 description = "Nautobot app to build IPsec tunnels on Cisco IOS-XE devices"
-authors = ["NRTC Ops"]
-license = "Apache-2.0"
 readme = "README.md"
+authors = [{ name = "NRTC DSO", email = "devsecops@nrtc.coop" }]
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11,<3.14"
+keywords = ["nautobot", "nautobot-app", "nautobot-plugin", "network-automation", "tunnels", "ipsec"]
+dependencies = [
+    "nautobot>=3.0.0,<4.0.0",
+    "netmiko>=4.0.0",
+]
+
+[tool.poetry]
 homepage = "https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder"
 repository = "https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder"
-keywords = ["nautobot", "nautobot-app", "nautobot-plugin"]
+documentation = "https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder"
 classifiers = [
     "Intended Audience :: Developers",
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 3 - Production/Stable",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",

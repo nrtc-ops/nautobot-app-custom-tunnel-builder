@@ -4471,10 +4471,7 @@ pyyaml = "*"
 [package.extras]
 dev = ["doc8", "flake8", "flake8-import-order", "rstcheck[sphinx]", "ruff", "sphinx"]
 
-[extras]
-all = []
-
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.14"
-content-hash = "8c613c013ad1154d72ffc5f3bf7ae86b9599183da5b1a7330fefded06394e3f4"
+content-hash = "b7aee5c18b5ef02f82c3bf51aa6c0f1fe07c8e7330f77e21f979e3466b04b24a"
