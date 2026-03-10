@@ -5,7 +5,6 @@ import ipaddress
 from django import forms
 from nautobot.dcim.models import Device
 
-
 # ---------------------------------------------------------------------------
 # IKE Version
 # ---------------------------------------------------------------------------
@@ -60,8 +59,8 @@ IKE_DH_GROUP_CHOICES = [
     ("20", "Group 20 - 384-bit ECP"),
     ("21", "Group 21 - 521-bit ECP"),
     ("14", "Group 14 - 2048-bit MODP"),
-    ("5",  "Group 5  - 1536-bit MODP (IKEv1 Legacy)"),
-    ("2",  "Group 2  - 1024-bit MODP (IKEv1 Legacy)"),
+    ("5", "Group 5  - 1536-bit MODP (IKEv1 Legacy)"),
+    ("2", "Group 2  - 1024-bit MODP (IKEv1 Legacy)"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -87,6 +86,7 @@ IPSEC_INTEGRITY_CHOICES = [
 # ---------------------------------------------------------------------------
 # Form
 # ---------------------------------------------------------------------------
+
 
 class IpsecTunnelForm(forms.Form):
     """Form for building a policy-based IPsec tunnel (IKEv1 or IKEv2) on a Cisco IOS-XE device."""
@@ -334,9 +334,7 @@ class IpsecTunnelForm(forms.Form):
         try:
             net = ipaddress.IPv4Network(value, strict=False)
         except ValueError as err:
-            raise forms.ValidationError(
-                "Enter a valid IPv4 network in CIDR notation, e.g. 192.168.1.0/24."
-            ) from err
+            raise forms.ValidationError("Enter a valid IPv4 network in CIDR notation, e.g. 192.168.1.0/24.") from err
         return str(net)
 
     def clean_local_network(self):
@@ -366,9 +364,12 @@ class IpsecTunnelForm(forms.Form):
         # IKEv2-specific required fields
         if version == "ikev2":
             for field in (
-                "ikev2_proposal_name", "ikev2_policy_name",
-                "ikev2_keyring_name", "ikev2_profile_name",
-                "ikev2_encryption", "ikev2_integrity",
+                "ikev2_proposal_name",
+                "ikev2_policy_name",
+                "ikev2_keyring_name",
+                "ikev2_profile_name",
+                "ikev2_encryption",
+                "ikev2_integrity",
             ):
                 if not cleaned.get(field):
                     self.add_error(field, "This field is required when IKEv2 is selected.")

@@ -5,30 +5,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Install in editable mode with dev dependencies
-pip install -e ".[dev]"
+# Install with Poetry
+poetry install
 
 # Run tests
-pytest
-
-# Run a single test file
-pytest tests/test_jobs.py
+invoke unittest
+# or directly:
+poetry run pytest
 
 # Lint
-flake8 nautobot_custom_tunnel_builder/
+invoke ruff
 
 # Format
-black nautobot_custom_tunnel_builder/
+poetry run ruff format nautobot_custom_tunnel_builder/
 
 # Build distribution
-python -m build
+poetry build
+
+# Docker dev environment
+invoke build
+invoke start
+invoke stop
 
 # After any model/migration changes
-nautobot-server migrate
-nautobot-server collectstatic
+invoke makemigrations
 ```
 
-Code style: Black formatter, Flake8, 120-character line limit.
+Code style: ruff (format + lint), pylint, 120-character line limit.
 
 ## Architecture
 

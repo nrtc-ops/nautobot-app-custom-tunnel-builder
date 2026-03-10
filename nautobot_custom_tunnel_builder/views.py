@@ -6,8 +6,8 @@ from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin, PermissionRequiredMixin
 from django.shortcuts import redirect, render
 from django.views import View
-
-from nautobot.extras.models import Job as JobModel, JobResult
+from nautobot.extras.models import Job as JobModel
+from nautobot.extras.models import JobResult
 
 from .forms import IpsecTunnelForm
 

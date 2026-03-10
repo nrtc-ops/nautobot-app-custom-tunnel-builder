@@ -4,7 +4,7 @@ import ipaddress
 import logging
 import traceback
 
-from nautobot.apps.jobs import Job, register_jobs, ObjectVar, StringVar, IntegerVar, ChoiceVar
+from nautobot.apps.jobs import ChoiceVar, IntegerVar, Job, ObjectVar, StringVar, register_jobs
 from nautobot.dcim.models import Device
 
 logger = logging.getLogger(__name__)
@@ -54,8 +54,8 @@ IKE_DH_GROUP_CHOICES = (
     ("20", "Group 20 - 384-bit ECP"),
     ("21", "Group 21 - 521-bit ECP"),
     ("14", "Group 14 - 2048-bit MODP"),
-    ("5",  "Group 5  - 1536-bit MODP (IKEv1 Legacy)"),
-    ("2",  "Group 2  - 1024-bit MODP (IKEv1 Legacy)"),
+    ("5", "Group 5  - 1536-bit MODP (IKEv1 Legacy)"),
+    ("2", "Group 2  - 1024-bit MODP (IKEv1 Legacy)"),
 )
 
 IPSEC_ENCRYPTION_CHOICES = (
@@ -77,6 +77,7 @@ IPSEC_INTEGRITY_CHOICES = (
 # Helper: CIDR → (network_address, wildcard_mask)
 # ---------------------------------------------------------------------------
 
+
 def _cidr_to_net_wildcard(cidr: str) -> tuple[str, str]:
     """Convert '192.168.1.0/24' → ('192.168.1.0', '0.0.0.255')."""
     net = ipaddress.IPv4Network(cidr, strict=False)
@@ -87,6 +88,7 @@ def _cidr_to_net_wildcard(cidr: str) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 # Config builder
 # ---------------------------------------------------------------------------
+
 
 def build_iosxe_policy_config(data: dict) -> list[str]:
     """
@@ -208,6 +210,7 @@ def build_iosxe_policy_config(data: dict) -> list[str]:
 # Nautobot Job
 # ---------------------------------------------------------------------------
 
+
 class BuildIpsecTunnel(Job):
     """
     Build a policy-based IPsec tunnel on a Cisco IOS-XE device.
@@ -220,8 +223,7 @@ class BuildIpsecTunnel(Job):
     class Meta:
         name = "Build Policy-Based IPsec Tunnel (IOS-XE)"
         description = (
-            "Generates and pushes a policy-based IKEv1 or IKEv2 IPsec "
-            "configuration to a Cisco IOS-XE device."
+            "Generates and pushes a policy-based IKEv1 or IKEv2 IPsec " "configuration to a Cisco IOS-XE device."
         )
         label = "Build IPsec Tunnel"
         commit_default = True
@@ -432,17 +434,34 @@ class BuildIpsecTunnel(Job):
     # ------------------------------------------------------------------ #
 
     def run(
-        self, device, ike_version, remote_peer_ip, local_network, remote_network,
-        crypto_acl_name, wan_interface, crypto_map_name, crypto_map_sequence,
-        ike_dh_group, ike_lifetime,
-        isakmp_policy_priority, ikev1_encryption, ikev1_hash,
-        ikev2_proposal_name, ikev2_policy_name, ikev2_keyring_name, ikev2_profile_name,
-        ikev2_encryption, ikev2_integrity,
+        self,
+        device,
+        ike_version,
+        remote_peer_ip,
+        local_network,
+        remote_network,
+        crypto_acl_name,
+        wan_interface,
+        crypto_map_name,
+        crypto_map_sequence,
+        ike_dh_group,
+        ike_lifetime,
+        isakmp_policy_priority,
+        ikev1_encryption,
+        ikev1_hash,
+        ikev2_proposal_name,
+        ikev2_policy_name,
+        ikev2_keyring_name,
+        ikev2_profile_name,
+        ikev2_encryption,
+        ikev2_integrity,
         pre_shared_key,
-        ipsec_transform_set_name, ipsec_encryption, ipsec_integrity, ipsec_lifetime,
+        ipsec_transform_set_name,
+        ipsec_encryption,
+        ipsec_integrity,
+        ipsec_lifetime,
     ):
         """Execute the policy-based IPsec tunnel build."""
-
         # ---------------------------------------------------------------- #
         # 1. Build configuration commands                                   #
         # ---------------------------------------------------------------- #
@@ -490,8 +509,7 @@ class BuildIpsecTunnel(Job):
 
         # Log config (redact PSK)
         redacted = [
-            line.replace(pre_shared_key, "***REDACTED***") if pre_shared_key in line else line
-            for line in commands
+            line.replace(pre_shared_key, "***REDACTED***") if pre_shared_key in line else line for line in commands
         ]
         self.logger.debug("Configuration preview:\n%s", "\n".join(redacted))
 

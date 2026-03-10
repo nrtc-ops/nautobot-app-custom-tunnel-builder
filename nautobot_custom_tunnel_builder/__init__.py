@@ -1,6 +1,7 @@
 """Nautobot Custom Tunnel Builder App."""
 
-from importlib.metadata import PackageNotFoundError, version as get_version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as get_version
 
 try:
     __version__ = get_version("nautobot-custom-tunnel-builder")
