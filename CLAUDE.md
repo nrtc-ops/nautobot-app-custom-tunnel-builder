@@ -15,10 +15,10 @@ pytest
 pytest tests/test_jobs.py
 
 # Lint
-flake8 nautobot_app_custom_tunnel_builder/
+flake8 nautobot_custom_tunnel_builder/
 
 # Format
-black nautobot_app_custom_tunnel_builder/
+black nautobot_custom_tunnel_builder/
 
 # Build distribution
 python -m build
@@ -45,7 +45,7 @@ Browser form → IpsecTunnelBuilderView (views.py)
 ```
 
 **Key modules:**
-- `__init__.py` — `NautobotAppCustomTunnelBuilderConfig`; imports `jobs` in `ready()` to register the Nautobot job
+- `__init__.py` — `NautobotCustomTunnelBuilderConfig`; imports `jobs` in `ready()` to register the Nautobot job
 - `jobs.py` — `BuildIpsecTunnel` job + `build_iosxe_policy_config(data)` config builder
 - `forms.py` — `IpsecTunnelForm`; device filtered to `cisco_ios`/`cisco_xe` platform drivers
 - `views.py` — `IpsecTunnelBuilderView` (LoginRequired + `extras.run_job` permission)

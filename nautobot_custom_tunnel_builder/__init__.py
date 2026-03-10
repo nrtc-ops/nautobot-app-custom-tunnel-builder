@@ -3,17 +3,17 @@
 from importlib.metadata import PackageNotFoundError, version as get_version
 
 try:
-    __version__ = get_version("nautobot_app_custom_tunnel_builder")
+    __version__ = get_version("nautobot-custom-tunnel-builder")
 except PackageNotFoundError:
     # Fallback version when package metadata is unavailable (e.g., running from source)
     __version__ = "0.0.0"
 from nautobot.apps import NautobotAppConfig
 
 
-class NautobotAppCustomTunnelBuilderConfig(NautobotAppConfig):
+class NautobotCustomTunnelBuilderConfig(NautobotAppConfig):
     """Nautobot app configuration for Custom Tunnel Builder."""
 
-    name = "nautobot_app_custom_tunnel_builder"
+    name = "nautobot_custom_tunnel_builder"
     verbose_name = "Custom Tunnel Builder"
     description = "Build policy-based IPsec tunnels (IKEv1/IKEv2) on Cisco IOS-XE devices."
     version = __version__
@@ -35,4 +35,4 @@ class NautobotAppCustomTunnelBuilderConfig(NautobotAppConfig):
         from . import jobs  # noqa: F401
 
 
-config = NautobotAppCustomTunnelBuilderConfig
+config = NautobotCustomTunnelBuilderConfig

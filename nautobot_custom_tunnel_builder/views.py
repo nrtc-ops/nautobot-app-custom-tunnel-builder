@@ -14,7 +14,7 @@ from .forms import IpsecTunnelForm
 logger = logging.getLogger(__name__)
 
 # Full dotted class-path Nautobot uses to look up the registered job.
-JOB_CLASS_PATH = "nautobot_app_custom_tunnel_builder.jobs.BuildIpsecTunnel"
+JOB_CLASS_PATH = "nautobot_custom_tunnel_builder.jobs.BuildIpsecTunnel"
 
 
 class IpsecTunnelBuilderView(LoginRequiredMixin, PermissionRequiredMixin, View):
@@ -26,7 +26,7 @@ class IpsecTunnelBuilderView(LoginRequiredMixin, PermissionRequiredMixin, View):
     """
 
     permission_required = "extras.run_job"
-    template_name = "nautobot_app_custom_tunnel_builder/ipsec_tunnel_form.html"
+    template_name = "nautobot_custom_tunnel_builder/ipsec_tunnel_form.html"
 
     # ------------------------------------------------------------------
     # GET – render empty form
@@ -52,7 +52,7 @@ class IpsecTunnelBuilderView(LoginRequiredMixin, PermissionRequiredMixin, View):
         # Locate the registered job model in the database.
         try:
             job_model = JobModel.objects.get(
-                module_name="nautobot_app_custom_tunnel_builder.jobs",
+                module_name="nautobot_custom_tunnel_builder.jobs",
                 job_class_name="BuildIpsecTunnel",
             )
         except JobModel.DoesNotExist:

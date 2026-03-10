@@ -1,8 +1,8 @@
 # Overview
 
-## What is `nautobot-app-custom-tunnel-builder`?
+## What is `nautobot-custom-tunnel-builder`?
 
-`nautobot-app-custom-tunnel-builder` is a Nautobot 3.x app (plugin) that provides a custom web form inside Nautobot for building **policy-based IPsec tunnels** — using either **IKEv1 (ISAKMP)** or **IKEv2** — on Cisco IOS-XE devices (e.g., Cisco CSR 1000v).
+`nautobot-custom-tunnel-builder` is a Nautobot 3.x app (plugin) that provides a custom web form inside Nautobot for building **policy-based IPsec tunnels** — using either **IKEv1 (ISAKMP)** or **IKEv2** — on Cisco IOS-XE devices (e.g., Cisco CSR 1000v).
 
 Operators fill in the form, click **Build Tunnel**, and a Nautobot Job connects to the device over SSH, pushes the generated crypto map configuration, and saves it to startup-config — all without leaving the browser.
 

@@ -13,7 +13,7 @@ nautobot-app-custom-tunnel-builder/
 │   ├── usage.md
 │   ├── iosxe-config.md
 │   └── development.md
-└── nautobot_app_custom_tunnel_builder/             # Python package
+└── nautobot_custom_tunnel_builder/             # Python package
     ├── __init__.py                             # NautobotAppConfig
     ├── forms.py                                # Django form
     ├── jobs.py                                 # Nautobot Job + config builder
@@ -21,7 +21,7 @@ nautobot-app-custom-tunnel-builder/
     ├── urls.py                                 # URL routing
     ├── views.py                                # Custom CBV
     └── templates/
-        └── nautobot_app_custom_tunnel_builder/
+        └── nautobot_custom_tunnel_builder/
             └── ipsec_tunnel_form.html          # Bootstrap 5 form template
 ```
 
@@ -66,7 +66,7 @@ Make sure the app is listed in `PLUGINS` in that config file.
 
 ### `__init__.py` — App Registration
 
-Defines `NautobotAppCustomTunnelBuilderConfig(NautobotAppConfig)`. This is the Django AppConfig subclass Nautobot discovers when `nautobot_app_custom_tunnel_builder` is in `PLUGINS`.
+Defines `NautobotCustomTunnelBuilderConfig(NautobotAppConfig)`. This is the Django AppConfig subclass Nautobot discovers when `nautobot_custom_tunnel_builder` is in `PLUGINS`.
 
 Key attributes:
 
@@ -111,7 +111,7 @@ Two distinct responsibilities:
 A pure function that takes a dict of parameters and returns an ordered list of IOS-XE CLI commands. It is deliberately decoupled from Nautobot and Netmiko so it can be unit-tested independently.
 
 ```python
-from nautobot_app_custom_tunnel_builder.jobs import build_iosxe_ipsec_config
+from nautobot_custom_tunnel_builder.jobs import build_iosxe_ipsec_config
 
 cmds = build_iosxe_ipsec_config({
     "tunnel_number": 100,
@@ -176,7 +176,7 @@ The `base_url = "tunnel-builder"` in `__init__.py` controls the `/plugins/<base_
 
 ---
 
-### `templates/nautobot_app_custom_tunnel_builder/ipsec_tunnel_form.html`
+### `templates/nautobot_custom_tunnel_builder/ipsec_tunnel_form.html`
 
 Extends Nautobot's `base.html`. Uses Bootstrap 5 (already included in Nautobot 3.x).
 
@@ -234,10 +234,10 @@ Tests are located in `tests/` (not yet scaffolded). Key things to test:
 
 ```bash
 # Format
-black nautobot_app_custom_tunnel_builder/
+black nautobot_custom_tunnel_builder/
 
 # Lint
-flake8 nautobot_app_custom_tunnel_builder/
+flake8 nautobot_custom_tunnel_builder/
 ```
 
 Max line length is 120 characters (configure in `setup.cfg` or `pyproject.toml` as needed).

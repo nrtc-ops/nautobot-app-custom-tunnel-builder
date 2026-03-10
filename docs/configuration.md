@@ -6,7 +6,7 @@ The following settings can be overridden in `nautobot_config.py` under `PLUGINS_
 
 ```python
 PLUGINS_CONFIG = {
-    "nautobot_app_custom_tunnel_builder": {
+    "nautobot_custom_tunnel_builder": {
         "device_ssh_port": 22,
         "connection_timeout": 30,
     }

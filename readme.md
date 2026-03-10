@@ -51,7 +51,7 @@ pip install -e .
 ### 2. Add to `nautobot_config.py`
 
 ```python
-PLUGINS = ["nautobot_app_custom_tunnel_builder"]
+PLUGINS = ["nautobot_custom_tunnel_builder"]
 ```
 
 ### 3. Migrate and collect static
@@ -139,7 +139,7 @@ nautobot-app-custom-tunnel-builder/
 │   ├── usage.md             # Form fields, job result, failure scenarios
 │   ├── iosxe-config.md      # Full IOS-XE config template + worked example
 │   └── development.md       # Code map, adding features, testing
-└── nautobot_app_custom_tunnel_builder/
+└── nautobot_custom_tunnel_builder/
     ├── __init__.py           # NautobotAppConfig
     ├── forms.py              # IpsecTunnelForm
     ├── jobs.py               # BuildIpsecTunnel Job + config builder
@@ -147,7 +147,7 @@ nautobot-app-custom-tunnel-builder/
     ├── urls.py               # URL routing
     ├── views.py              # IpsecTunnelBuilderView
     └── templates/
-        └── nautobot_app_custom_tunnel_builder/
+        └── nautobot_custom_tunnel_builder/
             └── ipsec_tunnel_form.html
 ```
 

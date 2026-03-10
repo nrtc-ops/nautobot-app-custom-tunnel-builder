@@ -4,7 +4,7 @@ from django.urls import path
 
 from .views import IpsecTunnelBuilderView
 
-app_name = "nautobot_app_custom_tunnel_builder"
+app_name = "nautobot_custom_tunnel_builder"
 
 urlpatterns = [
     path(
