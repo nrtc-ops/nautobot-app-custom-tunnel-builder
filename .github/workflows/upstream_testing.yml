@@ -1,0 +1,24 @@
+---
+name: "Nautobot Upstream Monitor"
+
+on:  # yamllint disable-line rule:truthy rule:comments
+  schedule:
+    - cron: "0 4 */2 * *"  # every other day at 4 AM
+  workflow_dispatch:
+
+jobs:
+  upstream-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nautobot_branch: "develop"
+            app_branch: "main"
+          - nautobot_branch: "next"
+            app_branch: "main"
+    uses: "nautobot/nautobot/.github/workflows/plugin_upstream_testing_base.yml@develop"
+    with:
+      invoke_context_name: "NAUTOBOT_CUSTOM_TUNNEL_BUILDER"
+      app_name: "nautobot-custom-tunnel-builder"
+      nautobot_branch: "${{ matrix.nautobot_branch }}"
+      app_branch: "${{ matrix.app_branch }}"
