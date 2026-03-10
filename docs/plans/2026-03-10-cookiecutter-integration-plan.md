@@ -15,7 +15,7 @@
 | Variable | Value |
 |---|---|
 | `app_name` | `nautobot_custom_tunnel_builder` |
-| `app_slug` | `custom-tunnel-builder` |
+| `app_slug` | `nautobot-custom-tunnel-builder` |
 | `project_slug` | `nautobot-app-custom-tunnel-builder` (repo) |
 | `verbose_name` | `Custom Tunnel Builder` |
 | `camel_name` | `CustomTunnelBuilder` |
