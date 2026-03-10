@@ -1,0 +1,49 @@
+---
+services:
+  nautobot:
+    command: "nautobot-server runserver 0.0.0.0:8080 --insecure"
+    ports:
+      - "8080:8080"
+    volumes:
+      - "./nautobot_config.py:/opt/nautobot/nautobot_config.py"
+      - "../nautobot_custom_tunnel_builder:/source/nautobot_custom_tunnel_builder"
+    healthcheck:
+      disable: true
+  docs:
+    entrypoint: "mkdocs serve -v -a 0.0.0.0:8001"
+    image: "nautobot-custom-tunnel-builder-nautobot:${NAUTOBOT_VER}-py${PYTHON_VER}"
+    env_file:
+      - "development.env"
+      - "creds.env"
+    tty: true
+    ports:
+      - "8001:8001"
+    volumes:
+      - "../docs:/source/docs"
+      - "../mkdocs.yml:/source/mkdocs.yml"
+  worker:
+    entrypoint:
+      - "sh"
+      - "-c"
+      - "watchmedo auto-restart --signal SIGTERM --directory './' --pattern '*.py' --recursive -- nautobot-server celery worker -l $$NAUTOBOT_LOG_LEVEL -c 1"
+    volumes:
+      - "./nautobot_config.py:/opt/nautobot/nautobot_config.py"
+      - "../nautobot_custom_tunnel_builder:/source/nautobot_custom_tunnel_builder"
+    healthcheck:
+      disable: true
+  beat:
+    entrypoint:
+      - "sh"
+      - "-c"
+      - "watchmedo auto-restart --signal SIGTERM --directory './' --pattern '*.py' --recursive -- nautobot-server celery beat -l $$NAUTOBOT_LOG_LEVEL"
+    volumes:
+      - "./nautobot_config.py:/opt/nautobot/nautobot_config.py"
+      - "../nautobot_custom_tunnel_builder:/source/nautobot_custom_tunnel_builder"
+    healthcheck:
+      disable: true
+  # db:
+  #   ports:
+  #     - "5432:5432"
+  # redis:
+  #   ports:
+  #     - "6379:6379"

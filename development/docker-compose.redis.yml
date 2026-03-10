@@ -1,0 +1,19 @@
+---
+services:
+  redis:
+    image: "redis:6-alpine"
+    command:
+      - "sh"
+      - "-c"
+      - "redis-server --appendonly yes --requirepass $$NAUTOBOT_REDIS_PASSWORD"
+    env_file:
+      - "creds.env"
+  nautobot:
+    depends_on:
+      - "redis"
+  worker:
+    depends_on:
+      - "redis"
+  beat:
+    depends_on:
+      - "redis"

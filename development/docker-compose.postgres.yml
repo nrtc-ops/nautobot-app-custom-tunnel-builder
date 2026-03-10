@@ -1,0 +1,42 @@
+---
+services:
+  nautobot:
+    environment:
+      - "NAUTOBOT_DB_ENGINE=django.db.backends.postgresql"
+    depends_on:
+      db:
+        condition: "service_healthy"
+  worker:
+    environment:
+      - "NAUTOBOT_DB_ENGINE=django.db.backends.postgresql"
+    depends_on:
+      db:
+        condition: "service_healthy"
+  beat:
+    environment:
+      - "NAUTOBOT_DB_ENGINE=django.db.backends.postgresql"
+    depends_on:
+      db:
+        condition: "service_healthy"
+  db:
+    image: "postgres:17-alpine"
+    env_file:
+      - "creds.env"
+    environment:
+      POSTGRES_DB: "nautobot"
+    command:
+      - "-c"
+      - "max_connections=200"
+    volumes:
+      - "postgres_data:/var/lib/postgresql/data"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready --username $$POSTGRES_USER --dbname $$POSTGRES_DB",
+        ]
+      interval: "5s"
+      timeout: "5s"
+      retries: 50
+volumes:
+  postgres_data: {}

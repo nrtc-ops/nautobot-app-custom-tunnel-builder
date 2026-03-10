@@ -1,0 +1,52 @@
+---
+services:
+  nautobot:
+    build:
+      args:
+        NAUTOBOT_VER: "${NAUTOBOT_VER}"
+        PYTHON_VER: "${PYTHON_VER}"
+      context: "../"
+      dockerfile: "development/Dockerfile"
+    image: "nautobot-custom-tunnel-builder-nautobot:${NAUTOBOT_VER}-py${PYTHON_VER}"
+    env_file:
+      - "development.env"
+      - "creds.env"
+    tty: true
+    healthcheck:
+      interval: "5s"
+      timeout: "5s"
+      start_period: "5m"
+      retries: 3
+      test: ["CMD", "nautobot-server", "health_check"]
+  worker:
+    entrypoint:
+      - "sh"
+      - "-c"
+      - "nautobot-server celery worker -l $$NAUTOBOT_LOG_LEVEL -c 1"
+    healthcheck:
+      interval: "30s"
+      timeout: "10s"
+      start_period: "30s"
+      retries: 3
+      test: ["CMD", "nautobot-server", "celery", "inspect", "ping", "--timeout", "10", "--destination", "celery@$$HOSTNAME"]
+    image: "nautobot-custom-tunnel-builder-nautobot:${NAUTOBOT_VER}-py${PYTHON_VER}"
+    env_file:
+      - "development.env"
+      - "creds.env"
+    tty: true
+    depends_on:
+      nautobot:
+        condition: "service_healthy"
+  beat:
+    entrypoint:
+      - "sh"
+      - "-c"
+      - "nautobot-server celery beat -l $$NAUTOBOT_LOG_LEVEL"
+    image: "nautobot-custom-tunnel-builder-nautobot:${NAUTOBOT_VER}-py${PYTHON_VER}"
+    env_file:
+      - "development.env"
+      - "creds.env"
+    tty: true
+    depends_on:
+      nautobot:
+        condition: "service_healthy"
