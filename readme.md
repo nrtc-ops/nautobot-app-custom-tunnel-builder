@@ -1,12 +1,15 @@
 # nautobot-app-custom-tunnel-builder
 
-[![CI](https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder/actions/workflows/ci.yml/badge.svg)](https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder/actions/workflows/ci.yml)
-[![Release](https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder/actions/workflows/release.yml/badge.svg)](https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder/actions/workflows/release.yml)
+[![Build and Upload to PyPi](https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder/actions/workflows/pypi-workflow.yml/badge.svg)](https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder/actions/workflows/pypi-workflow.yml)
+
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/nrtc-ops/nautobot-app-custom-tunnel-builder?style=for-the-badge)
+
+![Dynamic TOML Badge](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fgithub.com%2Fnrtc-ops%2Fnautobot-app-custom-tunnel-builder%2Fblob%2Fmain%2Fpyproject.toml&query=%24.version)
 
 
 A **Nautobot 3.x app** that provides a custom web form for building **policy-based IPsec tunnels** (IKEv1 or IKEv2) on Cisco IOS-XE devices (CSR 1000v, ASR 1000, ISR 4000).
 
-Operators fill out the form, click **Build Tunnel**, and a Nautobot Job SSHes into the target device, generates and pushes the full crypto map-based IPsec configuration, then saves the running config — all without leaving the browser.
+Operators fill out the form, click **Build Tunnel**, and a Nautobot Job SSHes into the target device, generates and pushes the full crypto map–based IPsec configuration, then saves the running config — all without leaving the browser.
 
 ---
 
@@ -14,16 +17,16 @@ Operators fill out the form, click **Build Tunnel**, and a Nautobot Job SSHes in
 
 - Custom Nautobot form at `/plugins/tunnel-builder/`
 - **Policy-based** IPsec using crypto maps and crypto ACLs
-- **IKEv2** support: proposal > policy > keyring > profile > transform-set > crypto map
-- **IKEv1** support: ISAKMP policy + pre-shared key > transform-set > crypto map
+- **IKEv2** support: proposal → policy → keyring → profile → transform-set → crypto map
+- **IKEv1** support: ISAKMP policy + pre-shared key → transform-set → crypto map
 - Algorithm choices: AES-128/192/256, AES-GCM-128/256 (IKEv2), SHA-1/256/384/512, MD5, DH groups 2/5/14/19/20/21
 - IKE version toggle with live show/hide of version-specific form sections
-- Form-level validation including CIDR network parsing and GCM / HMAC cross-field enforcement
+- Form-level validation including CIDR network parsing and GCM ↔ HMAC cross-field enforcement
 - Nautobot Job (`BuildIpsecTunnel`) runnable from both the custom form and the Jobs UI
 - SSH via [Netmiko](https://github.com/ktbyers/netmiko) — no RESTCONF or NETCONF required
 - PSK redacted from all job logs
 - Runs `copy running-config startup-config` automatically
-- Navigation menu entry under **Network Tools > VPN**
+- Navigation menu entry under **Network Tools → VPN**
 
 ---
 
@@ -42,7 +45,7 @@ Operators fill out the form, click **Build Tunnel**, and a Nautobot Job SSHes in
 ### 1. Install
 
 ```bash
-pip install nautobot-custom-tunnel-builder
+pip install -e .
 ```
 
 ### 2. Add to `nautobot_config.py`
@@ -51,10 +54,11 @@ pip install nautobot-custom-tunnel-builder
 PLUGINS = ["nautobot_custom_tunnel_builder"]
 ```
 
-### 3. Run post-upgrade
+### 3. Migrate and collect static
 
 ```bash
-nautobot-server post_upgrade
+nautobot-server migrate
+nautobot-server collectstatic --no-input
 ```
 
 ### 4. Set device credentials
@@ -68,30 +72,56 @@ export NAUTOBOT_DEVICE_ENABLE_SECRET=your-enable-secret   # optional
 ### 5. Restart services
 
 ```bash
-sudo systemctl restart nautobot nautobot-worker nautobot-scheduler
+sudo systemctl restart nautobot nautobot-worker
 ```
 
-Navigate to **Network Tools > VPN > Build IPsec Tunnel**.
+Navigate to **Network Tools → VPN → Build IPsec Tunnel**.
 
 ---
 
 ## How It Works
 
 ```
-Browser -> Custom Form (views.py)
-               |
-               |  JobResult.enqueue_job()
-               v
+Browser → Custom Form (views.py)
+               │
+               │  JobResult.enqueue_job()
+               ▼
          Nautobot Job (jobs.py)
-               |
-               |  Netmiko SSH
-               v
+               │
+               │  Netmiko SSH
+               ▼
          Cisco IOS-XE Device
 ```
 
-1. **`forms.py`** — Collects IKE version, peer info, interesting-traffic networks, crypto map settings, and IKE/IPsec parameters. Validates CIDRs, enforces IKEv2-only DH group restrictions, and rejects invalid GCM / HMAC combinations.
+1. **`forms.py`** — Collects IKE version, peer info, interesting-traffic networks, crypto map settings, and IKE/IPsec parameters. Validates CIDRs, enforces IKEv2-only DH group restrictions, and rejects invalid GCM ↔ HMAC combinations.
 2. **`views.py`** — Renders the form on GET; enqueues the `BuildIpsecTunnel` Job on valid POST, then redirects to the Job Result page.
 3. **`jobs.py`** — `build_iosxe_policy_config()` generates ordered CLI commands; the Job connects with Netmiko, pushes config, and saves it.
+
+### IOS-XE configuration blocks pushed (IKEv2)
+
+```
+crypto ikev2 proposal    →  Phase 1 algorithms
+crypto ikev2 policy      →  links proposal
+crypto ikev2 keyring     →  per-peer PSK
+crypto ikev2 profile     →  match + auth + keyring + lifetime
+ip access-list extended  →  interesting traffic (crypto ACL)
+crypto ipsec transform-set  →  Phase 2 ciphers
+crypto map               →  links transform-set + ikev2 profile + ACL
+interface <WAN>          →  crypto map applied
+copy running-config startup-config
+```
+
+### IOS-XE configuration blocks pushed (IKEv1)
+
+```
+crypto isakmp policy     →  Phase 1 algorithms + DH group
+crypto isakmp key        →  pre-shared key per peer
+ip access-list extended  →  interesting traffic (crypto ACL)
+crypto ipsec transform-set  →  Phase 2 ciphers
+crypto map               →  links transform-set + ACL + peer
+interface <WAN>          →  crypto map applied
+copy running-config startup-config
+```
 
 ---
 
@@ -99,27 +129,23 @@ Browser -> Custom Form (views.py)
 
 ```
 nautobot-app-custom-tunnel-builder/
-├── pyproject.toml                    # Package metadata (Poetry + PEP 621)
-├── poetry.lock                       # Locked dependencies
-├── tasks.py                          # Invoke tasks for dev workflow
-├── mkdocs.yml                        # Documentation config
-├── development/                      # Docker Compose dev environment
-│   ├── Dockerfile
-│   ├── docker-compose.*.yml
-│   ├── nautobot_config.py
-│   └── *.env
+├── pyproject.toml
+├── requirements.txt
+├── README.md
 ├── docs/
-│   ├── admin/                        # Install, upgrade, uninstall, release notes
-│   ├── user/                         # Overview, getting started, use cases, FAQ
-│   └── dev/                          # Contributing, dev environment, release checklist
-├── changes/                          # Towncrier changelog fragments
+│   ├── overview.md          # Architecture and design rationale
+│   ├── installation.md      # Step-by-step install guide
+│   ├── configuration.md     # App settings, env vars, SecretsGroup
+│   ├── usage.md             # Form fields, job result, failure scenarios
+│   ├── iosxe-config.md      # Full IOS-XE config template + worked example
+│   └── development.md       # Code map, adding features, testing
 └── nautobot_custom_tunnel_builder/
-    ├── __init__.py                   # NautobotAppConfig
-    ├── forms.py                      # IpsecTunnelForm
-    ├── jobs.py                       # BuildIpsecTunnel Job + config builder
-    ├── navigation.py                 # Nav menu
-    ├── urls.py                       # URL routing
-    ├── views.py                      # IpsecTunnelBuilderView
+    ├── __init__.py           # NautobotAppConfig
+    ├── forms.py              # IpsecTunnelForm
+    ├── jobs.py               # BuildIpsecTunnel Job + config builder
+    ├── navigation.py         # Nav menu
+    ├── urls.py               # URL routing
+    ├── views.py              # IpsecTunnelBuilderView
     └── templates/
         └── nautobot_custom_tunnel_builder/
             └── ipsec_tunnel_form.html
@@ -127,34 +153,14 @@ nautobot-app-custom-tunnel-builder/
 
 ---
 
-## Development
-
-```bash
-# Install dependencies
-poetry install
-
-# Docker dev environment
-poetry run invoke build
-poetry run invoke start
-
-# Run all tests
-poetry run invoke tests
-
-# Lint & format
-poetry run invoke ruff
-poetry run invoke autoformat
-```
-
-See the full [Development Environment](docs/dev/dev_environment.md) guide for more details.
-
----
-
 ## Device Requirements
 
 Devices must be registered in Nautobot with:
 
-- **Platform** > `network_driver` set to `cisco_ios` or `cisco_xe`
+- **Platform** → `network_driver` set to `cisco_ios` or `cisco_xe`
 - **Primary IPv4 address** set (used as the SSH target)
+
+IOS-XE version **12.4(20)T+** supports IKEv1 crypto maps. Version **15.2(1)S+** is required for `crypto ikev2` support.
 
 ---
 
@@ -168,14 +174,14 @@ Users must have the `extras.run_job` permission. The nav menu item and the form 
 
 Full documentation is in the [`docs/`](docs/) folder:
 
-| Section | Contents |
-|---------|----------|
-| [App Overview](docs/user/app_overview.md) | Architecture diagram, component table, policy-based vs VTI |
-| [Getting Started](docs/user/app_getting_started.md) | Every form field explained, job result walkthrough |
-| [Use Cases](docs/user/app_use_cases.md) | Full IOS-XE config template, worked example, verify commands |
-| [Install & Configure](docs/admin/install.md) | Install steps, app config, env vars, permissions |
-| [Development](docs/dev/dev_environment.md) | Docker dev env, invoke tasks, code style |
-| [Contributing](docs/dev/contributing.md) | Changelog fragments, branching, release policy |
+| Doc | Contents |
+|-----|----------|
+| [Overview](docs/overview.md) | Architecture diagram, component table, policy-based vs VTI |
+| [Installation](docs/installation.md) | Install steps, device prep, service restart |
+| [Configuration](docs/configuration.md) | App settings, env vars, SecretsGroup integration, permissions |
+| [Usage](docs/usage.md) | Every form field explained, job result walkthrough, failure scenarios |
+| [IOS-XE Config Reference](docs/iosxe-config.md) | Full config template, worked example, verify commands, remove commands |
+| [Development](docs/development.md) | Code map, extending the app, testing |
 
 ---
 
