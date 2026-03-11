@@ -11,6 +11,11 @@ dependencies = [
     "netmiko>=4.0.0",
 ]
 
+[project.optional-dependencies]
+all = [
+    "netutils>=1.0.0",
+]
+
 [tool.poetry]
 homepage = "https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder"
 repository = "https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder"
@@ -36,6 +41,7 @@ python = ">=3.11,<3.14"
 # Used for local development
 nautobot = ">=3.0.0,<4.0.0"
 netmiko = ">=4.0.0"
+netutils = { version = ">=1.0.0", optional = true }
 
 [tool.poetry.group.dev.dependencies]
 coverage = "*"
@@ -73,7 +79,6 @@ griffe = "1.1.1"
 
 [tool.poetry.extras]
 all = [
-    "netmiko",
     "netutils",
 ]
 
@@ -81,6 +86,7 @@ all = [
 # Include the pylint_django plugin to avoid spurious warnings about Django patterns
 load-plugins = "pylint_django, pylint_nautobot"
 ignore = ".venv"
+init-hook = "import nautobot; nautobot.setup(config_path='development/nautobot_config.py')"
 
 [tool.pylint.basic]
 # No docstrings required for private methods (Pylint default), or for test_ functions, or for inner Meta classes.
@@ -105,7 +111,6 @@ notes = """,
 [tool.ruff]
 line-length = 120
 target-version = "py312"
-fixable = ["ALL"]
 
 [tool.ruff.lint]
 fixable = ["ALL"]

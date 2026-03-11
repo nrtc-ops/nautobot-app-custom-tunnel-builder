@@ -95,7 +95,7 @@ class IpsecTunnelBuilderView(LoginRequiredMixin, PermissionRequiredMixin, View):
                 user=request.user,
                 **job_kwargs,
             )
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.exception("Failed to enqueue BuildIpsecTunnel job: %s", exc)
             messages.error(request, f"Failed to enqueue job: {exc}")
             return render(request, self.template_name, self._ctx(form))

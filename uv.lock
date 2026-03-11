@@ -1052,11 +1052,18 @@ dependencies = [
     { name = "netmiko" },
 ]
 
+[package.optional-dependencies]
+all = [
+    { name = "netutils" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "nautobot", specifier = ">=3.0.0,<4.0.0" },
     { name = "netmiko", specifier = ">=4.0.0" },
+    { name = "netutils", marker = "extra == 'all'", specifier = ">=1.0.0" },
 ]
+provides-extras = ["all"]
 
 [[package]]
 name = "netaddr"
