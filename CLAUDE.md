@@ -48,6 +48,7 @@ Browser form → IpsecTunnelBuilderView (views.py)
 ```
 
 **Key modules:**
+
 - `__init__.py` — `NautobotCustomTunnelBuilderConfig`; imports `jobs` in `ready()` to register the Nautobot job
 - `jobs.py` — `BuildIpsecTunnel` job + `build_iosxe_policy_config(data)` config builder
 - `forms.py` — `IpsecTunnelForm`; device filtered to `cisco_ios`/`cisco_xe` platform drivers
@@ -55,18 +56,22 @@ Browser form → IpsecTunnelBuilderView (views.py)
 - `navigation.py` — Network Tools → VPN → Build IPsec Tunnel
 
 **IKEv1 vs IKEv2 config paths** (both in `build_iosxe_policy_config`):
+
 - IKEv1: `crypto isakmp policy` → `crypto isakmp key` → `crypto ipsec transform-set` → `crypto map`
 - IKEv2: `crypto ikev2 proposal` → `crypto ikev2 policy` → `crypto ikev2 keyring` → `crypto ikev2 profile` → `crypto ipsec transform-set` → `crypto map`
 
 **Credential handling:**
+
 - SSH credentials from env vars: `NAUTOBOT_DEVICE_USERNAME`, `NAUTOBOT_DEVICE_PASSWORD`, `NAUTOBOT_DEVICE_ENABLE_SECRET`, `NAUTOBOT_DEVICE_SSH_PORT`
 - Pre-shared key (PSK) is a `SensitiveVariable`; redacted from all job logs and never stored in Nautobot
 
 **Device requirements:**
+
 - `platform.network_driver` must be `cisco_ios` or `cisco_xe`
 - Device must have a primary IPv4 address for SSH
 
 **Cross-field validation rules (forms.py + enforced in job):**
+
 - IKEv2 rejects DH groups 2 and 5
 - GCM Phase 2 encryption requires `None` integrity (HMAC not used with GCM)
 - Non-GCM encryption requires an explicit HMAC integrity algorithm
