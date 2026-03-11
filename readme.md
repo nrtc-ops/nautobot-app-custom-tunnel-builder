@@ -174,14 +174,7 @@ Users must have the `extras.run_job` permission. The nav menu item and the form 
 
 Full documentation is in the [`docs/`](docs/) folder:
 
-| Doc | Contents |
-|-----|----------|
-| [Overview](docs/overview.md) | Architecture diagram, component table, policy-based vs VTI |
-| [Installation](docs/installation.md) | Install steps, device prep, service restart |
-| [Configuration](docs/configuration.md) | App settings, env vars, SecretsGroup integration, permissions |
-| [Usage](docs/usage.md) | Every form field explained, job result walkthrough, failure scenarios |
-| [IOS-XE Config Reference](docs/iosxe-config.md) | Full config template, worked example, verify commands, remove commands |
-| [Development](docs/development.md) | Code map, extending the app, testing |
+
 
 ---
 

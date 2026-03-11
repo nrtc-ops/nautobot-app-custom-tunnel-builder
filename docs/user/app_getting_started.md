@@ -1,8 +1,8 @@
-# Usage
+# Getting Started
 
 ## Accessing the Form
 
-After installation, navigate to **Network Tools → VPN → Build IPsec Tunnel** in the Nautobot navigation bar. The form is available at:
+After installation, navigate to **Network Tools > VPN > Build IPsec Tunnel** in the Nautobot navigation bar. The form is available at:
 
 ```
 https://<your-nautobot>/plugins/tunnel-builder/
@@ -58,7 +58,7 @@ Defines which traffic is encrypted by the tunnel via an extended ACL.
 | Field                   | Description                                                                  | Default        |
 | ----------------------- | ---------------------------------------------------------------------------- | -------------- |
 | **IKE DH Group**        | Diffie-Hellman group for key exchange. Groups 2 and 5 are IKEv1 legacy only. | `Group 19`     |
-| **IKE SA Lifetime (s)** | How long the IKE SA lives before renegotiation. Range: 300–86400.            | `86400` (24 h) |
+| **IKE SA Lifetime (s)** | How long the IKE SA lives before renegotiation. Range: 300-86400.            | `86400` (24 h) |
 
 ---
 
@@ -92,7 +92,7 @@ Defines which traffic is encrypted by the tunnel via an extended ACL.
 | **Transform-Set Name**    | Name of the `crypto ipsec transform-set` object.                  | `IPSEC-TS`        |
 | **IPsec Encryption**      | Phase 2 encryption cipher.                                        | `ESP-AES-256`     |
 | **IPsec Integrity**       | Phase 2 integrity algorithm. Set to **None** with GCM encryption. | `ESP-SHA256-HMAC` |
-| **IPsec SA Lifetime (s)** | How long each IPsec SA lives before rekeying. Range: 120–86400.   | `3600` (1 h)      |
+| **IPsec SA Lifetime (s)** | How long each IPsec SA lives before rekeying. Range: 120-86400.   | `3600` (1 h)      |
 
 > **GCM note:** If you select `ESP-GCM-128` or `ESP-GCM-256`, you **must** set IPsec Integrity to **None**. The form enforces this with a cross-field validation error.
 
@@ -119,22 +119,18 @@ Defines which traffic is encrypted by the tunnel via an extended ACL.
 
 The redirect after submission lands on Nautobot's standard **Job Result** detail page:
 
-- **Status** — Pending → Running → Completed / Failed
+- **Status** — Pending > Running > Completed / Failed
 - **Log output** — Each step logged (PSK redacted):
-  - Configuration commands generated
-  - SSH connection established
-  - `send_config_set()` output from the device
-  - Confirmation that startup-config was saved
-- **Return value** — Summary string, e.g.:
-  ```text
-  IKEV2 policy-based IPsec tunnel to 203.0.113.1 configured on csr1-lab (10.0.0.1).
-  ```
+    - Configuration commands generated
+    - SSH connection established
+    - `send_config_set()` output from the device
+    - Confirmation that startup-config was saved
 
 ---
 
 ## Running the Job Directly (Jobs UI)
 
-The `BuildIpsecTunnel` job is available under **Jobs → Build Policy-Based IPsec Tunnel (IOS-XE)**. All form fields are also exposed as Job variables for scripted or API-driven execution.
+The `BuildIpsecTunnel` job is available under **Jobs > Build Policy-Based IPsec Tunnel (IOS-XE)**. All form fields are also exposed as Job variables for scripted or API-driven execution.
 
 ---
 

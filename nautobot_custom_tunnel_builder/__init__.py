@@ -1,13 +1,15 @@
 """Nautobot Custom Tunnel Builder App."""
 
-from importlib.metadata import PackageNotFoundError, version as get_version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as get_version
+
+from nautobot.apps import NautobotAppConfig
 
 try:
     __version__ = get_version("nautobot-custom-tunnel-builder")
 except PackageNotFoundError:
     # Fallback version when package metadata is unavailable (e.g., running from source)
     __version__ = "0.0.0"
-from nautobot.apps import NautobotAppConfig
 
 
 class NautobotCustomTunnelBuilderConfig(NautobotAppConfig):
@@ -32,7 +34,7 @@ class NautobotCustomTunnelBuilderConfig(NautobotAppConfig):
         """App ready hook."""
         super().ready()
         # Explicitly import jobs so Nautobot registers them during migrate.
-        from . import jobs  # noqa: F401
+        from . import jobs  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import
 
 
-config = NautobotCustomTunnelBuilderConfig
+config = NautobotCustomTunnelBuilderConfig  # pylint: disable=invalid-name

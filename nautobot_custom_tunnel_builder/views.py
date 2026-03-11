@@ -6,8 +6,8 @@ from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin, PermissionRequiredMixin
 from django.shortcuts import redirect, render
 from django.views import View
-
-from nautobot.extras.models import Job as JobModel, JobResult
+from nautobot.extras.models import Job as JobModel
+from nautobot.extras.models import JobResult
 
 from .forms import IpsecTunnelForm
 
@@ -18,12 +18,7 @@ JOB_CLASS_PATH = "nautobot_custom_tunnel_builder.jobs.BuildIpsecTunnel"
 
 
 class IpsecTunnelBuilderView(LoginRequiredMixin, PermissionRequiredMixin, View):
-    """
-    Custom view that renders the IPsec Tunnel Builder form and, on a valid
-    POST, enqueues the ``BuildIpsecTunnel`` Nautobot Job.
-
-    Permission required: ``extras.run_job``
-    """
+    """View to render the IPsec Tunnel Builder form and handle form submission."""
 
     permission_required = "extras.run_job"
     template_name = "nautobot_custom_tunnel_builder/ipsec_tunnel_form.html"
@@ -33,6 +28,7 @@ class IpsecTunnelBuilderView(LoginRequiredMixin, PermissionRequiredMixin, View):
     # ------------------------------------------------------------------
 
     def get(self, request):
+        """Render the IPsec Tunnel Builder form."""
         form = IpsecTunnelForm()
         return render(request, self.template_name, self._ctx(form))
 
@@ -41,6 +37,7 @@ class IpsecTunnelBuilderView(LoginRequiredMixin, PermissionRequiredMixin, View):
     # ------------------------------------------------------------------
 
     def post(self, request):
+        """Validate form input, enqueue Job, redirect to JobResult. On error, re-render form with error message."""
         form = IpsecTunnelForm(request.POST)
 
         if not form.is_valid():
@@ -98,7 +95,7 @@ class IpsecTunnelBuilderView(LoginRequiredMixin, PermissionRequiredMixin, View):
                 user=request.user,
                 **job_kwargs,
             )
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.exception("Failed to enqueue BuildIpsecTunnel job: %s", exc)
             messages.error(request, f"Failed to enqueue job: {exc}")
             return render(request, self.template_name, self._ctx(form))

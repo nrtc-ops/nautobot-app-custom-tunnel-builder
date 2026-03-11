@@ -5,30 +5,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Install in editable mode with dev dependencies
-pip install -e ".[dev]"
+# Install with Poetry
+poetry install
 
 # Run tests
-pytest
-
-# Run a single test file
-pytest tests/test_jobs.py
+invoke unittest
+# or directly:
+poetry run pytest
 
 # Lint
-flake8 nautobot_custom_tunnel_builder/
+invoke ruff
 
 # Format
-black nautobot_custom_tunnel_builder/
+poetry run ruff format nautobot_custom_tunnel_builder/
 
 # Build distribution
-python -m build
+poetry build
+
+# Docker dev environment
+invoke build
+invoke start
+invoke stop
 
 # After any model/migration changes
-nautobot-server migrate
-nautobot-server collectstatic
+invoke makemigrations
 ```
 
-Code style: Black formatter, Flake8, 120-character line limit.
+Code style: ruff (format + lint), pylint, 120-character line limit.
 
 ## Architecture
 
@@ -45,6 +48,7 @@ Browser form → IpsecTunnelBuilderView (views.py)
 ```
 
 **Key modules:**
+
 - `__init__.py` — `NautobotCustomTunnelBuilderConfig`; imports `jobs` in `ready()` to register the Nautobot job
 - `jobs.py` — `BuildIpsecTunnel` job + `build_iosxe_policy_config(data)` config builder
 - `forms.py` — `IpsecTunnelForm`; device filtered to `cisco_ios`/`cisco_xe` platform drivers
@@ -52,18 +56,22 @@ Browser form → IpsecTunnelBuilderView (views.py)
 - `navigation.py` — Network Tools → VPN → Build IPsec Tunnel
 
 **IKEv1 vs IKEv2 config paths** (both in `build_iosxe_policy_config`):
+
 - IKEv1: `crypto isakmp policy` → `crypto isakmp key` → `crypto ipsec transform-set` → `crypto map`
 - IKEv2: `crypto ikev2 proposal` → `crypto ikev2 policy` → `crypto ikev2 keyring` → `crypto ikev2 profile` → `crypto ipsec transform-set` → `crypto map`
 
 **Credential handling:**
+
 - SSH credentials from env vars: `NAUTOBOT_DEVICE_USERNAME`, `NAUTOBOT_DEVICE_PASSWORD`, `NAUTOBOT_DEVICE_ENABLE_SECRET`, `NAUTOBOT_DEVICE_SSH_PORT`
 - Pre-shared key (PSK) is a `SensitiveVariable`; redacted from all job logs and never stored in Nautobot
 
 **Device requirements:**
+
 - `platform.network_driver` must be `cisco_ios` or `cisco_xe`
 - Device must have a primary IPv4 address for SSH
 
 **Cross-field validation rules (forms.py + enforced in job):**
+
 - IKEv2 rejects DH groups 2 and 5
 - GCM Phase 2 encryption requires `None` integrity (HMAC not used with GCM)
 - Non-GCM encryption requires an explicit HMAC integrity algorithm

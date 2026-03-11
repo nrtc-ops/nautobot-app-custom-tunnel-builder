@@ -1,4 +1,4 @@
-# Overview
+# App Overview
 
 ## What is `nautobot-custom-tunnel-builder`?
 
@@ -12,28 +12,28 @@ Operators fill in the form, click **Build Tunnel**, and a Nautobot Job connects 
 
 ```
 Browser
-  │
-  ▼
-┌─────────────────────────────────────────────┐
-│  Nautobot 3.x                               │
-│                                             │
-│  ┌─────────────────────────────────────┐   │
-│  │  Custom View  (views.py)            │   │
-│  │  GET  → render IpsecTunnelForm      │   │
-│  │  POST → validate → enqueue Job      │   │
-│  └────────────────┬────────────────────┘   │
-│                   │ JobResult.enqueue_job() │
-│  ┌────────────────▼────────────────────┐   │
-│  │  Nautobot Job  (jobs.py)            │   │
-│  │  BuildIpsecTunnel.run()             │   │
-│  │  1. Build IOS-XE config commands    │   │
-│  │  2. Netmiko SSH → Device            │   │
-│  │  3. send_config_set()               │   │
-│  │  4. save_config()                   │   │
-│  └────────────────┬────────────────────┘   │
-└───────────────────┼─────────────────────────┘
-                    │ SSH / Netmiko
-                    ▼
+  |
+  v
++---------------------------------------------+
+|  Nautobot 3.x                               |
+|                                             |
+|  +-------------------------------------+   |
+|  |  Custom View  (views.py)            |   |
+|  |  GET  -> render IpsecTunnelForm     |   |
+|  |  POST -> validate -> enqueue Job    |   |
+|  +----------------+--------------------+   |
+|                   | JobResult.enqueue_job() |
+|  +----------------v--------------------+   |
+|  |  Nautobot Job  (jobs.py)            |   |
+|  |  BuildIpsecTunnel.run()             |   |
+|  |  1. Build IOS-XE config commands    |   |
+|  |  2. Netmiko SSH -> Device           |   |
+|  |  3. send_config_set()               |   |
+|  |  4. save_config()                   |   |
+|  +----------------+--------------------+   |
++-------------------+------------------------+
+                    | SSH / Netmiko
+                    v
               Cisco IOS-XE
               (CSR 1000v / ASR / ISR)
 ```
@@ -49,7 +49,7 @@ Browser
 | `jobs.py`       | Nautobot Job — generates IOS-XE commands via `build_iosxe_policy_config()` and pushes them via SSH |
 | `views.py`      | Custom Django CBV — serves the form and dispatches the job                                         |
 | `urls.py`       | Routes `/tunnel-builder/` to the view                                                              |
-| `navigation.py` | Adds **Network Tools → VPN → Build IPsec Tunnel** to Nautobot's nav bar                            |
+| `navigation.py` | Adds **Network Tools > VPN > Build IPsec Tunnel** to Nautobot's nav bar                            |
 | `templates/`    | Bootstrap 5 HTML template with IKE version show/hide                                               |
 
 ---

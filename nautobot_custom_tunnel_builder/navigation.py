@@ -1,6 +1,6 @@
 """Navigation menu items for the Custom Tunnel Builder app."""
 
-from nautobot.apps.ui import NavMenuTab, NavMenuGroup, NavMenuItem, NavMenuButton
+from nautobot.apps.ui import NavMenuButton, NavMenuGroup, NavMenuItem, NavMenuTab
 
 menu_items = (
     NavMenuTab(
