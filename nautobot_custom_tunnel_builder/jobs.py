@@ -2,75 +2,27 @@
 
 import ipaddress
 import logging
+import os
 import traceback
 
+from netmiko import ConnectHandler
 from nautobot.apps.jobs import ChoiceVar, IntegerVar, Job, ObjectVar, StringVar, register_jobs
 from nautobot.dcim.models import Device
 
+from .constants import (
+    IKE_DH_GROUP_CHOICES,
+    IKE_VERSION_CHOICES,
+    IKEV1_ENCRYPTION_CHOICES,
+    IKEV1_HASH_CHOICES,
+    IKEV2_ENCRYPTION_CHOICES,
+    IKEV2_INTEGRITY_CHOICES,
+    IPSEC_ENCRYPTION_CHOICES,
+    IPSEC_INTEGRITY_CHOICES,
+)
+
 logger = logging.getLogger(__name__)
 
-name = "NRTC Tunnel Builders"
-
-# ---------------------------------------------------------------------------
-# Choices — must mirror forms.py so the Job can also be run from the
-# Nautobot Jobs UI directly.
-# ---------------------------------------------------------------------------
-
-IKE_VERSION_CHOICES = (
-    ("ikev2", "IKEv2 (Recommended)"),
-    ("ikev1", "IKEv1 (Legacy)"),
-)
-
-IKEV1_ENCRYPTION_CHOICES = (
-    ("aes 256", "AES-256 (Recommended)"),
-    ("aes", "AES-128"),
-    ("aes 192", "AES-192"),
-    ("3des", "3DES (Legacy)"),
-)
-
-IKEV1_HASH_CHOICES = (
-    ("sha256", "SHA-256 (Recommended)"),
-    ("sha384", "SHA-384"),
-    ("sha512", "SHA-512"),
-    ("sha", "SHA-1 (Legacy)"),
-    ("md5", "MD5 (Legacy)"),
-)
-
-IKEV2_ENCRYPTION_CHOICES = (
-    ("aes-cbc-256", "AES-CBC-256 (Recommended)"),
-    ("aes-cbc-128", "AES-CBC-128"),
-    ("aes-gcm-256", "AES-GCM-256"),
-    ("aes-gcm-128", "AES-GCM-128"),
-)
-
-IKEV2_INTEGRITY_CHOICES = (
-    ("sha256", "SHA-256 (Recommended)"),
-    ("sha384", "SHA-384"),
-    ("sha512", "SHA-512"),
-)
-
-IKE_DH_GROUP_CHOICES = (
-    ("19", "Group 19 - 256-bit ECP (Recommended)"),
-    ("20", "Group 20 - 384-bit ECP"),
-    ("21", "Group 21 - 521-bit ECP"),
-    ("14", "Group 14 - 2048-bit MODP"),
-    ("5", "Group 5  - 1536-bit MODP (IKEv1 Legacy)"),
-    ("2", "Group 2  - 1024-bit MODP (IKEv1 Legacy)"),
-)
-
-IPSEC_ENCRYPTION_CHOICES = (
-    ("esp-aes 256", "ESP-AES-256 (Recommended)"),
-    ("esp-aes 128", "ESP-AES-128"),
-    ("esp-gcm 256", "ESP-GCM-256"),
-    ("esp-gcm 128", "ESP-GCM-128"),
-)
-
-IPSEC_INTEGRITY_CHOICES = (
-    ("esp-sha256-hmac", "ESP-SHA256-HMAC (Recommended)"),
-    ("esp-sha384-hmac", "ESP-SHA384-HMAC"),
-    ("esp-sha512-hmac", "ESP-SHA512-HMAC"),
-    ("", "None (use with GCM encryption)"),
-)
+name = "NRTC Tunnel Builders"  # pylint: disable=invalid-name
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +38,55 @@ def _cidr_to_net_wildcard(cidr: str) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Phase 1 config builders
+# ---------------------------------------------------------------------------
+
+
+def _build_ikev1_commands(data: dict) -> list[str]:
+    """Build IKEv1 (ISAKMP) Phase 1 configuration commands."""
+    priority = data["isakmp_policy_priority"]
+    remote_peer = data["remote_peer_ip"]
+    psk = data["pre_shared_key"]
+
+    return [
+        f"crypto isakmp policy {priority}",
+        f" encr {data['ikev1_encryption']}",
+        f" hash {data['ikev1_hash']}",
+        " authentication pre-share",
+        f" group {data['ike_dh_group']}",
+        f" lifetime {data['ike_lifetime']}",
+        f"crypto isakmp key {psk} address {remote_peer}",
+    ]
+
+
+def _build_ikev2_commands(data: dict) -> list[str]:
+    """Build IKEv2 Phase 1 configuration commands."""
+    remote_peer = data["remote_peer_ip"]
+    psk = data["pre_shared_key"]
+    peer_name = f"PEER_{remote_peer.replace('.', '_')}"
+
+    return [
+        f"crypto ikev2 proposal {data['ikev2_proposal_name']}",
+        f" encryption {data['ikev2_encryption']}",
+        f" integrity {data['ikev2_integrity']}",
+        f" group {data['ike_dh_group']}",
+        f"crypto ikev2 policy {data['ikev2_policy_name']}",
+        f" proposal {data['ikev2_proposal_name']}",
+        f"crypto ikev2 keyring {data['ikev2_keyring_name']}",
+        f" peer {peer_name}",
+        f"  address {remote_peer}",
+        f"  pre-shared-key local {psk}",
+        f"  pre-shared-key remote {psk}",
+        f"crypto ikev2 profile {data['ikev2_profile_name']}",
+        f" match identity remote address {remote_peer} 255.255.255.255",
+        " authentication local pre-share",
+        " authentication remote pre-share",
+        f" keyring local {data['ikev2_keyring_name']}",
+        f" lifetime {data['ike_lifetime']}",
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Config builder
 # ---------------------------------------------------------------------------
 
@@ -98,13 +99,9 @@ def build_iosxe_policy_config(data: dict) -> list[str]:
     """
     ike_version = data["ike_version"]
     remote_peer = data["remote_peer_ip"]
-    psk = data["pre_shared_key"]
-    wan_iface = data["wan_interface"]
     map_name = data["crypto_map_name"]
     map_seq = data["crypto_map_sequence"]
     acl_name = data["crypto_acl_name"]
-    ike_dh_group = data["ike_dh_group"]
-    ike_lifetime = data["ike_lifetime"]
     ts_name = data["ipsec_transform_set_name"]
     ipsec_enc = data["ipsec_encryption"]
     ipsec_integ = data.get("ipsec_integrity", "")
@@ -113,70 +110,17 @@ def build_iosxe_policy_config(data: dict) -> list[str]:
     local_net, local_wildcard = _cidr_to_net_wildcard(data["local_network"])
     remote_net, remote_wildcard = _cidr_to_net_wildcard(data["remote_network"])
 
-    commands = []
-
-    # ------------------------------------------------------------------ #
-    # Phase 1: IKEv1 (ISAKMP) or IKEv2                                   #
-    # ------------------------------------------------------------------ #
+    # Phase 1: IKEv1 (ISAKMP) or IKEv2
     if ike_version == "ikev1":
-        priority = data["isakmp_policy_priority"]
-        ikev1_enc = data["ikev1_encryption"]
-        ikev1_hash = data["ikev1_hash"]
+        commands = _build_ikev1_commands(data)
+    else:
+        commands = _build_ikev2_commands(data)
 
-        # ISAKMP policy
-        commands.append(f"crypto isakmp policy {priority}")
-        commands.append(f" encr {ikev1_enc}")
-        commands.append(f" hash {ikev1_hash}")
-        commands.append(" authentication pre-share")
-        commands.append(f" group {ike_dh_group}")
-        commands.append(f" lifetime {ike_lifetime}")
-
-        # Pre-shared key
-        commands.append(f"crypto isakmp key {psk} address {remote_peer}")
-
-    else:  # ikev2
-        proposal_name = data["ikev2_proposal_name"]
-        policy_name = data["ikev2_policy_name"]
-        keyring_name = data["ikev2_keyring_name"]
-        profile_name = data["ikev2_profile_name"]
-        ikev2_enc = data["ikev2_encryption"]
-        ikev2_integ = data["ikev2_integrity"]
-
-        # IKEv2 Proposal
-        commands.append(f"crypto ikev2 proposal {proposal_name}")
-        commands.append(f" encryption {ikev2_enc}")
-        commands.append(f" integrity {ikev2_integ}")
-        commands.append(f" group {ike_dh_group}")
-
-        # IKEv2 Policy
-        commands.append(f"crypto ikev2 policy {policy_name}")
-        commands.append(f" proposal {proposal_name}")
-
-        # IKEv2 Keyring
-        peer_name = f"PEER_{remote_peer.replace('.', '_')}"
-        commands.append(f"crypto ikev2 keyring {keyring_name}")
-        commands.append(f" peer {peer_name}")
-        commands.append(f"  address {remote_peer}")
-        commands.append(f"  pre-shared-key local {psk}")
-        commands.append(f"  pre-shared-key remote {psk}")
-
-        # IKEv2 Profile
-        commands.append(f"crypto ikev2 profile {profile_name}")
-        commands.append(f" match identity remote address {remote_peer} 255.255.255.255")
-        commands.append(" authentication local pre-share")
-        commands.append(" authentication remote pre-share")
-        commands.append(f" keyring local {keyring_name}")
-        commands.append(f" lifetime {ike_lifetime}")
-
-    # ------------------------------------------------------------------ #
-    # Crypto ACL (interesting traffic)                                     #
-    # ------------------------------------------------------------------ #
+    # Crypto ACL (interesting traffic)
     commands.append(f"ip access-list extended {acl_name}")
     commands.append(f" permit ip {local_net} {local_wildcard} {remote_net} {remote_wildcard}")
 
-    # ------------------------------------------------------------------ #
-    # IPsec Transform-Set (Phase 2)                                        #
-    # ------------------------------------------------------------------ #
+    # IPsec Transform-Set (Phase 2)
     if ipsec_integ:
         commands.append(f"crypto ipsec transform-set {ts_name} {ipsec_enc} {ipsec_integ}")
     else:
@@ -184,9 +128,7 @@ def build_iosxe_policy_config(data: dict) -> list[str]:
         commands.append(f"crypto ipsec transform-set {ts_name} {ipsec_enc}")
     commands.append(" mode tunnel")
 
-    # ------------------------------------------------------------------ #
-    # Crypto Map                                                           #
-    # ------------------------------------------------------------------ #
+    # Crypto Map
     commands.append(f"crypto map {map_name} {map_seq} ipsec-isakmp")
     commands.append(f" set peer {remote_peer}")
     commands.append(f" set transform-set {ts_name}")
@@ -195,10 +137,8 @@ def build_iosxe_policy_config(data: dict) -> list[str]:
         commands.append(f" set ikev2-profile {data['ikev2_profile_name']}")
     commands.append(f" match address {acl_name}")
 
-    # ------------------------------------------------------------------ #
-    # Apply crypto map to WAN interface                                    #
-    # ------------------------------------------------------------------ #
-    commands.append(f"interface {wan_iface}")
+    # Apply crypto map to WAN interface
+    commands.append(f"interface {data['wan_interface']}")
     commands.append(f" crypto map {map_name}")
 
     return commands
@@ -220,12 +160,13 @@ class BuildIpsecTunnel(Job):
 
     """
 
-    class Meta:
+    class Meta:  # pylint: disable=too-few-public-methods
         """Meta attributes for the Job."""
 
         name = "Build Policy-Based IPsec Tunnel (IOS-XE)"
         description = (
-            "Generates and pushes a policy-based IKEv1 or IKEv2 IPsec " "configuration to a Cisco IOS-XE device."
+            "Generates and pushes a policy-based IKEv1 or IKEv2 IPsec"
+            " configuration to a Cisco IOS-XE device."
         )
         label = "Build IPsec Tunnel"
         commit_default = True
@@ -435,7 +376,7 @@ class BuildIpsecTunnel(Job):
     # Main run method                                                      #
     # ------------------------------------------------------------------ #
 
-    def run(
+    def run(  # pylint: disable=arguments-differ,too-many-arguments,too-many-locals
         self,
         device,
         ike_version,
@@ -527,14 +468,6 @@ class BuildIpsecTunnel(Job):
             mgmt_ip,
             device_type,
         )
-
-        try:
-            from netmiko import ConnectHandler
-        except ImportError:
-            self.logger.error("Netmiko is not installed. Install it with: pip install netmiko")
-            raise
-
-        import os
 
         device_params = {
             "device_type": device_type,

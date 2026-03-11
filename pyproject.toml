@@ -86,6 +86,7 @@ all = [
 # Include the pylint_django plugin to avoid spurious warnings about Django patterns
 load-plugins = "pylint_django, pylint_nautobot"
 ignore = ".venv"
+init-hook = "import nautobot; nautobot.setup(config_path='development/nautobot_config.py')"
 
 [tool.pylint.basic]
 # No docstrings required for private methods (Pylint default), or for test_ functions, or for inner Meta classes.
