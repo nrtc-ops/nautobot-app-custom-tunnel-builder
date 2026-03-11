@@ -21,9 +21,6 @@ RUN which poetry || curl -sSL https://install.python-poetry.org | python3 -
 # Copy only dependency files first (for Docker layer caching)
 COPY pyproject.toml poetry.lock /source/
 
-# Install the project dependencies
-RUN poetry install --no-interaction --no-ansi
-
 # Copy the rest of the source code
 COPY . /source
 
