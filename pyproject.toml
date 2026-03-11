@@ -169,7 +169,7 @@ build-backend = "poetry.core.masonry.api"
 [tool.towncrier]
 package = "nautobot_custom_tunnel_builder"
 directory = "changes"
-filename = "docs/admin/release_notes/version_0.2.md"
+filename = "docs/admin/release_notes/version_0.3.md"
 template = "development/towncrier_template.j2"
 start_string = "<!-- towncrier release notes start -->"
 issue_format = "[#{issue}](https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder/issues/{issue})"
