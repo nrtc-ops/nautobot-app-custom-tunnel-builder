@@ -164,9 +164,7 @@ class BuildIpsecTunnel(Job):
         """Meta attributes for the Job."""
 
         name = "Build Policy-Based IPsec Tunnel (IOS-XE)"
-        description = (
-            "Generates and pushes a policy-based IKEv1 or IKEv2 IPsec configuration to a Cisco IOS-XE device."
-        )
+        description = "Generates and pushes a policy-based IKEv1 or IKEv2 IPsec configuration to a Cisco IOS-XE device."
         label = "Build IPsec Tunnel"
         commit_default = True
         has_sensitive_variables = True  # contains the PSK
