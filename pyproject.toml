@@ -11,6 +11,11 @@ dependencies = [
     "netmiko>=4.0.0",
 ]
 
+[project.optional-dependencies]
+all = [
+    "netutils>=1.0.0",
+]
+
 [tool.poetry]
 homepage = "https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder"
 repository = "https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder"
