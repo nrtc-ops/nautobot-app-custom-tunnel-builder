@@ -91,12 +91,10 @@ def _cidr_to_net_wildcard(cidr: str) -> tuple[str, str]:
 
 
 def build_iosxe_policy_config(data: dict) -> list[str]:
-    """
-    Generate an ordered list of IOS-XE configuration commands for a
-    policy-based IPsec tunnel using either IKEv1 (ISAKMP) or IKEv2.
+    """Build Router Config.
 
-    Returns a list of strings ready to pass to Netmiko's
-    ``send_config_set()``.
+    Build a list of IOS-XE configuration commands to create a policy-based
+    IPsec tunnel based on the provided data dictionary.
     """
     ike_version = data["ike_version"]
     remote_peer = data["remote_peer_ip"]
@@ -213,14 +211,18 @@ def build_iosxe_policy_config(data: dict) -> list[str]:
 
 class BuildIpsecTunnel(Job):
     """
+
     Build a policy-based IPsec tunnel on a Cisco IOS-XE device.
 
     Supports both IKEv1 (ISAKMP) and IKEv2. Connects to the selected device
     over SSH using Netmiko, pushes the generated configuration, and saves the
     running config to startup-config.
+
     """
 
     class Meta:
+        """Meta attributes for the Job."""
+
         name = "Build Policy-Based IPsec Tunnel (IOS-XE)"
         description = (
             "Generates and pushes a policy-based IKEv1 or IKEv2 IPsec " "configuration to a Cisco IOS-XE device."

@@ -18,13 +18,7 @@ JOB_CLASS_PATH = "nautobot_custom_tunnel_builder.jobs.BuildIpsecTunnel"
 
 
 class IpsecTunnelBuilderView(LoginRequiredMixin, PermissionRequiredMixin, View):
-    """
-    Custom view that renders the IPsec Tunnel Builder form and, on a valid
-    POST, enqueues the ``BuildIpsecTunnel`` Nautobot Job.
-
-    Permission required: ``extras.run_job``
-    """
-
+    """View to render the IPsec Tunnel Builder form and handle form submission."""
     permission_required = "extras.run_job"
     template_name = "nautobot_custom_tunnel_builder/ipsec_tunnel_form.html"
 
@@ -33,6 +27,7 @@ class IpsecTunnelBuilderView(LoginRequiredMixin, PermissionRequiredMixin, View):
     # ------------------------------------------------------------------
 
     def get(self, request):
+        """Render the IPsec Tunnel Builder form."""
         form = IpsecTunnelForm()
         return render(request, self.template_name, self._ctx(form))
 
@@ -41,6 +36,7 @@ class IpsecTunnelBuilderView(LoginRequiredMixin, PermissionRequiredMixin, View):
     # ------------------------------------------------------------------
 
     def post(self, request):
+        """Validate form input, enqueue Job, redirect to JobResult. On error, re-render form with error message."""
         form = IpsecTunnelForm(request.POST)
 
         if not form.is_valid():
