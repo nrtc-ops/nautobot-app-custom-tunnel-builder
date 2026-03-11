@@ -3,21 +3,74 @@
 import os
 import sys
 
-from nautobot.core.settings import *  # noqa: F401,F403
-from nautobot.core.settings.utils import is_truthy
+from nautobot.core.settings import *  # noqa: F403  # pylint: disable=wildcard-import,unused-wildcard-import
+from nautobot.core.settings_funcs import is_truthy
 
 #
 # Debug
 #
 
-DEBUG = is_truthy(os.environ.get("NAUTOBOT_DEBUG", False))
+DEBUG = is_truthy(os.getenv("NAUTOBOT_DEBUG", False))
+_TESTING = len(sys.argv) > 1 and sys.argv[1] == "test"
 
-# Django Debug Toolbar
-DEBUG_TOOLBAR_CONFIG = {"SHOW_TOOLBAR_CALLBACK": lambda _request: DEBUG and not TESTING}
+if DEBUG and not _TESTING:
+    DEBUG_TOOLBAR_CONFIG = {"SHOW_TOOLBAR_CALLBACK": lambda _request: True}
 
-if DEBUG and "debug_toolbar" not in INSTALLED_APPS:  # noqa: F405
-    INSTALLED_APPS.append("debug_toolbar")  # noqa: F405
-    MIDDLEWARE.insert(0, "debug_toolbar.middleware.DebugToolbarMiddleware")  # noqa: F405
+    if "debug_toolbar" not in INSTALLED_APPS:  # noqa: F405
+        INSTALLED_APPS.append("debug_toolbar")  # noqa: F405
+    if "debug_toolbar.middleware.DebugToolbarMiddleware" not in MIDDLEWARE:  # noqa: F405
+        MIDDLEWARE.insert(0, "debug_toolbar.middleware.DebugToolbarMiddleware")  # noqa: F405
+
+#
+# Misc. settings
+#
+
+ALLOWED_HOSTS = os.getenv("NAUTOBOT_ALLOWED_HOSTS", "").split(" ")
+SECRET_KEY = os.getenv("NAUTOBOT_SECRET_KEY", "")
+
+#
+# Database
+#
+
+nautobot_db_engine = os.getenv("NAUTOBOT_DB_ENGINE", "django.db.backends.postgresql")
+default_db_settings = {
+    "django.db.backends.postgresql": {
+        "NAUTOBOT_DB_PORT": "5432",
+    },
+    "django.db.backends.mysql": {
+        "NAUTOBOT_DB_PORT": "3306",
+    },
+}
+DATABASES = {
+    "default": {
+        "NAME": os.getenv("NAUTOBOT_DB_NAME", "nautobot"),  # Database name
+        "USER": os.getenv("NAUTOBOT_DB_USER", ""),  # Database username
+        "PASSWORD": os.getenv("NAUTOBOT_DB_PASSWORD", ""),  # Database password
+        "HOST": os.getenv("NAUTOBOT_DB_HOST", "localhost"),  # Database server
+        "PORT": os.getenv(
+            "NAUTOBOT_DB_PORT", default_db_settings[nautobot_db_engine]["NAUTOBOT_DB_PORT"]
+        ),  # Database port, default to postgres
+        "CONN_MAX_AGE": int(os.getenv("NAUTOBOT_DB_TIMEOUT", 300)),  # Database timeout
+        "ENGINE": nautobot_db_engine,
+    }
+}
+
+# Ensure proper Unicode handling for MySQL
+if DATABASES["default"]["ENGINE"] == "django.db.backends.mysql":
+    DATABASES["default"]["OPTIONS"] = {"charset": "utf8mb4"}
+
+#
+# Redis
+#
+
+# The django-redis cache is used to establish concurrent locks using Redis.
+# Inherited from nautobot.core.settings
+# CACHES = {....}
+
+#
+# Celery settings are not defined here because they can be overloaded with
+# environment variables. By default they use `CACHES["default"]["LOCATION"]`.
+#
 
 #
 # Logging
@@ -25,10 +78,8 @@ if DEBUG and "debug_toolbar" not in INSTALLED_APPS:  # noqa: F405
 
 LOG_LEVEL = "DEBUG" if DEBUG else "INFO"
 
-TESTING = len(sys.argv) > 1 and sys.argv[1] == "test"
-
 # Verbose logging during normal development operation, but quiet logging during unit test execution
-if not TESTING:
+if not _TESTING:
     LOGGING = {
         "version": 1,
         "disable_existing_loggers": False,
@@ -56,20 +107,17 @@ if not TESTING:
         },
         "loggers": {
             "django": {"handlers": ["normal_console"], "level": "INFO"},
-            "nautobot": {"handlers": ["verbose_console"], "level": LOG_LEVEL},
+            "nautobot": {
+                "handlers": ["verbose_console" if DEBUG else "normal_console"],
+                "level": LOG_LEVEL,
+            },
         },
     }
 
 #
-# Plugins
+# Apps
 #
 
 PLUGINS = ["nautobot_custom_tunnel_builder"]
 
 PLUGINS_CONFIG = {}
-
-#
-# Celery/Redis
-#
-
-# Redis is configured via environment variables in development.env and creds.env

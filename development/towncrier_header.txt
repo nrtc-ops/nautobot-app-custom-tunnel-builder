@@ -4,6 +4,7 @@ This document describes all new features and changes in the release. The format 
 
 ## Release Overview
 
-- ADD A SHORT DESCRIPTION OF WHAT THE RELEASE ADDRESSES
+- Major features or milestones
+- Changes to compatibility with Nautobot and/or other apps, libraries etc.
 
 <!-- towncrier release notes start -->
