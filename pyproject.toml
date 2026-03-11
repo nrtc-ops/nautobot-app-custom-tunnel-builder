@@ -111,7 +111,6 @@ notes = """,
 [tool.ruff]
 line-length = 120
 target-version = "py312"
-fixable = ["ALL"]
 
 [tool.ruff.lint]
 fixable = ["ALL"]

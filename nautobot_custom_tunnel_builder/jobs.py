@@ -5,9 +5,9 @@ import logging
 import os
 import traceback
 
-from netmiko import ConnectHandler
 from nautobot.apps.jobs import ChoiceVar, IntegerVar, Job, ObjectVar, StringVar, register_jobs
 from nautobot.dcim.models import Device
+from netmiko import ConnectHandler
 
 from .constants import (
     IKE_DH_GROUP_CHOICES,
