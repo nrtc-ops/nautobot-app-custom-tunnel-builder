@@ -1,6 +1,6 @@
 [project]
 name = "nautobot-custom-tunnel-builder"
-version = "0.2.3a1"
+version = "0.3.0"
 description = "Nautobot app to build IPsec tunnels on Cisco IOS-XE devices"
 readme = "readme.md"
 authors = [{ name = "NRTC DSO", email = "devsecops@nrtc.coop" }]
@@ -169,7 +169,7 @@ build-backend = "poetry.core.masonry.api"
 [tool.towncrier]
 package = "nautobot_custom_tunnel_builder"
 directory = "changes"
-filename = "docs/admin/release_notes/version_X.Y.md"
+filename = "docs/admin/release_notes/version_0.2.md"
 template = "development/towncrier_template.j2"
 start_string = "<!-- towncrier release notes start -->"
 issue_format = "[#{issue}](https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder/issues/{issue})"

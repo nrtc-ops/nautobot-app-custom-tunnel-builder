@@ -312,3 +312,10 @@ public
 /compose.yaml
 /dump.sql
 /nautobot_custom_tunnel_builder/static/nautobot_custom_tunnel_builder/docs
+
+# Ruff
+.ruff_cache/
+
+# Draft Plans
+**/plans/**
+docs/plans/
