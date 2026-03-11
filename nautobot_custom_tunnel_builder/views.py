@@ -19,6 +19,7 @@ JOB_CLASS_PATH = "nautobot_custom_tunnel_builder.jobs.BuildIpsecTunnel"
 
 class IpsecTunnelBuilderView(LoginRequiredMixin, PermissionRequiredMixin, View):
     """View to render the IPsec Tunnel Builder form and handle form submission."""
+
     permission_required = "extras.run_job"
     template_name = "nautobot_custom_tunnel_builder/ipsec_tunnel_form.html"
 
