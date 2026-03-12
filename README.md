@@ -1,22 +1,25 @@
-# nautobot-app-custom-tunnel-builder
+# Nautobot Custom Tunnel Builder
 
-> **⚠️ Alpha Software** — This project is in **alpha** status. APIs, configuration options, and behaviors may change between releases without notice. Use in production at your own risk.
+> **⚠️ Alpha Software**: This project is currently in **alpha** and is under active development. APIs, configuration options, and behavior may change between releases. Use in production environments is not recommended until a stable release is published.
 
-[![Build and Upload to PyPi](https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder/actions/workflows/pypi-workflow.yml/badge.svg)](https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder/actions/workflows/pypi-workflow.yml)
+An app for [Nautobot](https://github.com/nautobot/nautobot) that provides a ui/form for inputting tunnel configuration then builds device configurations and automated jobs to push to devices.
 
-![GitHub release (latest by date)](https://img.shields.io/github/v/release/nrtc-ops/nautobot-app-custom-tunnel-builder?style=for-the-badge)
+<p align="center">
+  <img src="https://raw.githubusercontent.com/nrtc-ops/nautobot-app-custom-tunnel-builder/main/docs/images/icon-nautobot-custom-tunnel-builder.png" class="logo" height="200px">
+  <br>
+  <a href="https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder/actions"><img src="https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="https://pypi.org/project/nautobot-custom-tunnel-builder/"><img src="https://img.shields.io/pypi/v/nautobot-custom-tunnel-builder"></a>
+  <a href="https://pypi.org/project/nautobot-custom-tunnel-builder/"><img src="https://img.shields.io/badge/status-alpha-orange"></a>
+  <a href="https://pypi.org/project/nautobot-custom-tunnel-builder/"><img src="https://img.shields.io/pypi/dm/nautobot-custom-tunnel-builder"></a>
+</p>
 
-![Dynamic TOML Badge](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fgithub.com%2Fnrtc-ops%2Fnautobot-app-custom-tunnel-builder%2Fblob%2Fmain%2Fpyproject.toml&query=%24.version)
-
-![Development Status](https://img.shields.io/badge/status-alpha-orange?style=for-the-badge)
+## Overview
 
 A **Nautobot 3.x app** that provides a custom web form for building **policy-based IPsec tunnels** (IKEv1 or IKEv2) on Cisco IOS-XE devices (CSR 1000v, ASR 1000, ISR 4000).
 
 Operators fill out the form, click **Build Tunnel**, and a Nautobot Job SSHes into the target device, generates and pushes the full crypto map–based IPsec configuration, then saves the running config — all without leaving the browser.
 
----
-
-## Features
+### Features
 
 - Custom Nautobot form at `/plugins/tunnel-builder/`
 - **Policy-based** IPsec using crypto maps and crypto ACLs
@@ -31,156 +34,23 @@ Operators fill out the form, click **Build Tunnel**, and a Nautobot Job SSHes in
 - Runs `copy running-config startup-config` automatically
 - Navigation menu entry under **Network Tools → VPN**
 
----
-
 ## Requirements
 
-| Dependency | Version |
-|------------|---------|
-| Python | 3.11+ |
-| Nautobot | 3.0.0+ |
-| Netmiko | 4.0.0+ |
-
----
-
-## Quick Start
-
-### 1. Install
-
-```bash
-pip install -e .
-```
-
-### 2. Add to `nautobot_config.py`
-
-```python
-PLUGINS = ["nautobot_custom_tunnel_builder"]
-```
-
-### 3. Migrate and collect static
-
-```bash
-nautobot-server migrate
-nautobot-server collectstatic --no-input
-```
-
-### 4. Set device credentials
-
-```bash
-export NAUTOBOT_DEVICE_USERNAME=admin
-export NAUTOBOT_DEVICE_PASSWORD=your-password
-export NAUTOBOT_DEVICE_ENABLE_SECRET=your-enable-secret   # optional
-```
-
-### 5. Restart services
-
-```bash
-sudo systemctl restart nautobot nautobot-worker
-```
-
-Navigate to **Network Tools → VPN → Build IPsec Tunnel**.
-
----
-
-## How It Works
-
-```
-Browser → Custom Form (views.py)
-               │
-               │  JobResult.enqueue_job()
-               ▼
-         Nautobot Job (jobs.py)
-               │
-               │  Netmiko SSH
-               ▼
-         Cisco IOS-XE Device
-```
-
-1. **`forms.py`** — Collects IKE version, peer info, interesting-traffic networks, crypto map settings, and IKE/IPsec parameters. Validates CIDRs, enforces IKEv2-only DH group restrictions, and rejects invalid GCM ↔ HMAC combinations.
-2. **`views.py`** — Renders the form on GET; enqueues the `BuildIpsecTunnel` Job on valid POST, then redirects to the Job Result page.
-3. **`jobs.py`** — `build_iosxe_policy_config()` generates ordered CLI commands; the Job connects with Netmiko, pushes config, and saves it.
-
-### IOS-XE configuration blocks pushed (IKEv2)
-
-```
-crypto ikev2 proposal    →  Phase 1 algorithms
-crypto ikev2 policy      →  links proposal
-crypto ikev2 keyring     →  per-peer PSK
-crypto ikev2 profile     →  match + auth + keyring + lifetime
-ip access-list extended  →  interesting traffic (crypto ACL)
-crypto ipsec transform-set  →  Phase 2 ciphers
-crypto map               →  links transform-set + ikev2 profile + ACL
-interface <WAN>          →  crypto map applied
-copy running-config startup-config
-```
-
-### IOS-XE configuration blocks pushed (IKEv1)
-
-```
-crypto isakmp policy     →  Phase 1 algorithms + DH group
-crypto isakmp key        →  pre-shared key per peer
-ip access-list extended  →  interesting traffic (crypto ACL)
-crypto ipsec transform-set  →  Phase 2 ciphers
-crypto map               →  links transform-set + ACL + peer
-interface <WAN>          →  crypto map applied
-copy running-config startup-config
-```
-
----
-
-## Project Layout
-
-```
-nautobot-app-custom-tunnel-builder/
-├── pyproject.toml
-├── requirements.txt
-├── README.md
-├── docs/
-│   ├── overview.md          # Architecture and design rationale
-│   ├── installation.md      # Step-by-step install guide
-│   ├── configuration.md     # App settings, env vars, SecretsGroup
-│   ├── usage.md             # Form fields, job result, failure scenarios
-│   ├── iosxe-config.md      # Full IOS-XE config template + worked example
-│   └── development.md       # Code map, adding features, testing
-└── nautobot_custom_tunnel_builder/
-    ├── __init__.py           # NautobotAppConfig
-    ├── forms.py              # IpsecTunnelForm
-    ├── jobs.py               # BuildIpsecTunnel Job + config builder
-    ├── navigation.py         # Nav menu
-    ├── urls.py               # URL routing
-    ├── views.py              # IpsecTunnelBuilderView
-    └── templates/
-        └── nautobot_custom_tunnel_builder/
-            └── ipsec_tunnel_form.html
-```
-
----
-
-## Device Requirements
-
-Devices must be registered in Nautobot with:
-
-- **Platform** → `network_driver` set to `cisco_ios` or `cisco_xe`
-- **Primary IPv4 address** set (used as the SSH target)
-
-IOS-XE version **12.4(20)T+** supports IKEv1 crypto maps. Version **15.2(1)S+** is required for `crypto ikev2` support.
-
----
-
-## Permissions
-
-Users must have the `extras.run_job` permission. The nav menu item and the form view both enforce this.
-
----
+- Nautobot >= 3.0.0+
+- Python >= 3.10, < 3.13
+- Netmiko >= 4.0
 
 ## Documentation
 
-Full documentation is in the [`docs/`](docs/) folder:
+Full documentation for this App can be found in docs/.
 
+### Contributing to the Documentation
 
+You can find all the Markdown source for the App documentation under the [`docs`](https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder/tree/main/docs) folder in this repository. For simple edits, a Markdown capable editor is sufficient: clone the repository and edit away.
 
----
+If you need to view the fully-generated documentation site, you can build it with [MkDocs](https://www.mkdocs.org/). A container hosting the documentation can be started using the `invoke` commands (details in the [Development Environment Guide](https://docs.nautobot.com/projects/custom-tunnel-builder/en/latest/dev/dev_environment/#docker-development-environment)) on [http://localhost:8001](http://localhost:8001). As your changes are saved, they will be automatically rebuilt and any pages currently being viewed will be reloaded in your browser.
 
-## License
+## Questions
 
-Apache 2.0
+For any questions or comments, please check the [FAQ](https://docs.nautobot.com/projects/custom-tunnel-builder/en/latest/user/faq/) first. Feel free to also swing by the [Network to Code Slack](https://networktocode.slack.com/) (channel `#nautobot`), sign up [here](http://slack.networktocode.com/) if you don't have an account.
+
