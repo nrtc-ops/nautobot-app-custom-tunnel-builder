@@ -1045,7 +1045,7 @@ wheels = [
 
 [[package]]
 name = "nautobot-custom-tunnel-builder"
-version = "0.3.0"
+version = "0.3.1a1"
 source = { editable = "." }
 dependencies = [
     { name = "nautobot" },
