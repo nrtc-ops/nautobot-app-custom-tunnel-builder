@@ -6,6 +6,14 @@ authors = [{ name = "NRTC DSO", email = "devsecops@nrtc.coop" }]
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11,<3.14"
 keywords = ["nautobot", "nautobot-app", "nautobot-plugin", "network-automation", "tunnels", "ipsec"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
 dependencies = [
     "nautobot>=3.0.0,<4.0.0",
     "netmiko>=4.0.0",
