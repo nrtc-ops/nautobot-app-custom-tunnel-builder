@@ -78,7 +78,7 @@ plugins:
           options:
             show_root_heading: true
 watch:
-  - "readme.md"
+  - "README.md"
 
 validation:
   omitted_files: "warn"

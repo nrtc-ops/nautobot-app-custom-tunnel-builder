@@ -1,7 +1,8 @@
 [project]
 name = "nautobot-custom-tunnel-builder"
-version = "0.3.1a1"
+version = "0.3.1a2"
 description = "Nautobot app to build IPsec tunnels on Cisco IOS-XE devices"
+readme = "README.md"
 authors = [{ name = "NRTC DSO", email = "devsecops@nrtc.coop" }]
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11,<3.14"
