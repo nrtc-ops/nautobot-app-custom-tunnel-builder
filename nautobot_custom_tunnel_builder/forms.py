@@ -3,9 +3,9 @@
 import ipaddress
 
 from django import forms
-from nautobot.dcim.models import Device
 
 from .constants import (
+    get_iosxe_device_queryset,
     IKE_DH_GROUP_CHOICES,
     IKE_VERSION_CHOICES,
     IKEV1_ENCRYPTION_CHOICES,
@@ -31,7 +31,7 @@ class IpsecTunnelForm(forms.Form):
     # Device                                                               #
     # ------------------------------------------------------------------ #
     device = forms.ModelChoiceField(
-        queryset=Device.objects.filter(platform__network_driver="cisco_xe").order_by("name"),
+        queryset=get_iosxe_device_queryset(),
         label="Target Device",
         help_text="Select the IOS-XE device to configure. Only devices with the 'cisco_ios' platform driver are listed.",
         widget=forms.Select(attrs={"class": "form-select"}),
