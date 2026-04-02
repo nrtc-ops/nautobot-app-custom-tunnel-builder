@@ -24,7 +24,7 @@ Network engineers manually SSH into Cisco IOS-XE devices to build IPsec tunnels.
 - **select_for_update()** on sequence number reads to prevent race conditions
 - **VPN objects first** (status=provisioning), update to active/failed after SSH
 - **Duplicate check:** (device + peer + local_network + remote_network)
-- **IOS-XE error detection:** parse send_config_set output for `% ` error prefix
+- **IOS-XE error detection:** parse send_config_set output for `%` error prefix
 - **PORTAL- prefix** on all auto-generated config names to avoid collision with manual tunnels
 - **Skip interface-apply block** for portal tunnels (crypto map already applied)
 - **Crypto map name** from Device Custom Field
@@ -33,7 +33,7 @@ Network engineers manually SSH into Cisco IOS-XE devices to build IPsec tunnels.
 
 ### Nautobot VPN Model Structure (verified from live instance)
 
-```
+```text
 VPNProfile (name, keepalive, NAT, secrets_group, etc.)
   └── VPNProfilePhase1PolicyAssignment (weight)
         └── VPNPhase1Policy (ike_version, encryption_algorithm[], integrity_algorithm[], dh_group[], lifetime_seconds)
@@ -47,7 +47,7 @@ All algorithm fields are JSON arrays (lists). Select first element.
 
 ## File Structure
 
-```
+```text
 nautobot_custom_tunnel_builder/
 ├── __init__.py                    ← MODIFY: register API URLs
 ├── constants.py                   ← MODIFY: add translation maps + shared queryset
@@ -76,6 +76,7 @@ nautobot_custom_tunnel_builder/
 ## Task 1: Algorithm Translation Maps in constants.py
 
 **Files:**
+
 - Modify: `nautobot_custom_tunnel_builder/constants.py`
 - Create: `nautobot_custom_tunnel_builder/tests/__init__.py`
 - Create: `nautobot_custom_tunnel_builder/tests/test_constants.py`
@@ -270,6 +271,7 @@ device = forms.ModelChoiceField(
 ```
 
 Add import at top of forms.py:
+
 ```python
 from .constants import get_iosxe_device_queryset
 ```
@@ -293,6 +295,7 @@ Fix forms.py to filter both cisco_ios and cisco_xe (was cisco_xe only)."
 ## Task 2: Extract SSH Push Function + Error Detection
 
 **Files:**
+
 - Modify: `nautobot_custom_tunnel_builder/jobs.py`
 - Create: `nautobot_custom_tunnel_builder/tests/test_ssh_push.py`
 
@@ -507,6 +510,7 @@ lines and raises IosXeConfigError before write mem."
 ## Task 3: Profile-to-Config Mapping Function
 
 **Files:**
+
 - Create: `nautobot_custom_tunnel_builder/mapping.py`
 - Create: `nautobot_custom_tunnel_builder/tests/test_mapping.py`
 
@@ -846,6 +850,7 @@ integrity (built-in auth)."
 ## Task 4: Portal Build Job (Celery)
 
 **Files:**
+
 - Modify: `nautobot_custom_tunnel_builder/jobs.py`
 
 - [ ] **Step 1: Add PortalBuildIpsecTunnel job class**
@@ -993,6 +998,7 @@ SSH, and updates tunnel status to active/failed."
 ## Task 5: API Module (Serializers, Views, URLs)
 
 **Files:**
+
 - Create: `nautobot_custom_tunnel_builder/api/__init__.py`
 - Create: `nautobot_custom_tunnel_builder/api/serializers.py`
 - Create: `nautobot_custom_tunnel_builder/api/views.py`
@@ -1363,6 +1369,7 @@ PSK stored temporarily in custom field data, cleared after retrieval."
 ## Task 6: Tests for Existing Code (Config Generation, Forms)
 
 **Files:**
+
 - Create: `nautobot_custom_tunnel_builder/tests/test_config_generation.py`
 - Create: `nautobot_custom_tunnel_builder/tests/test_forms.py`
 
@@ -1506,6 +1513,7 @@ _cidr_to_net_wildcard helper. Covers previously untested code."
 ## Task 7: Tests for API Endpoints
 
 **Files:**
+
 - Create: `nautobot_custom_tunnel_builder/tests/test_api.py`
 
 - [ ] **Step 1: Write API tests**
@@ -1594,11 +1602,13 @@ Covers auth, validation errors, and 404 cases."
 After all tasks are complete:
 
 1. **Run full test suite:**
+
    ```bash
    invoke tests
    ```
 
 2. **Verify API endpoints in Nautobot:**
+
    ```bash
    invoke start
    # Then test from another terminal:

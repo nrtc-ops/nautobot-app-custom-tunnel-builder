@@ -8,7 +8,7 @@ This document describes the exact IOS-XE configuration blocks that the `BuildIps
 
 The following shows every command block in the order they are sent via `send_config_set()`. Placeholders correspond directly to form fields.
 
-```
+```text
 ! ============================================================
 ! IKEv2 Proposal
 ! ============================================================
@@ -105,7 +105,7 @@ After all configuration lines are pushed, `save_config()` runs `copy running-con
 
 **Generated configuration:**
 
-```
+```text
 crypto ikev2 proposal IKEv2-PROPOSAL
  encryption aes-cbc-256
  integrity sha256
@@ -144,7 +144,7 @@ interface Tunnel100
 
 After the job completes successfully, run these commands on the device to verify:
 
-```
+```text
 ! Check IKEv2 SA state
 show crypto ikev2 sa
 
@@ -195,7 +195,7 @@ show crypto ikev2 profile IKEv2-PROFILE
 
 The app does not currently implement tunnel removal. To remove a tunnel manually:
 
-```
+```text
 no interface Tunnel100
 no crypto ipsec profile IPSEC-PROFILE
 no crypto ipsec transform-set IPSEC-TS

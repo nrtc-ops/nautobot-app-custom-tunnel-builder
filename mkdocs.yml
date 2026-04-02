@@ -108,3 +108,11 @@ nav:
       - Release Checklist: "dev/release_checklist.md"
       - Code Reference:
           - Package: "dev/code_reference/package.md"
+      - Designs:
+          - Portal API Design: "designs/portal-api-design.md"
+          - Portal API Eng Review & Test Plan: "designs/portal-api-eng-review-test-plan.md"
+      - Plans:
+          - Cookiecutter Integration Design: "plans/2026-03-10-cookiecutter-integration-design.md"
+          - Cookiecutter Integration Plan: "plans/2026-03-10-cookiecutter-integration-plan.md"
+          - Package Rename Design: "plans/2026-03-10-package-rename-design.md"
+          - Portal API Plan: "plans/2026-04-02-portal-api.md"

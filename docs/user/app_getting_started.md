@@ -41,7 +41,7 @@ Navigate to **Network Tools → VPN → Build IPsec Tunnel**.
 
 ## How It Works
 
-```
+```text
 Browser → Custom Form (views.py)
                │
                │  JobResult.enqueue_job()
@@ -59,7 +59,7 @@ Browser → Custom Form (views.py)
 
 ### IOS-XE configuration blocks pushed (IKEv2)
 
-```
+```text
 crypto ikev2 proposal    →  Phase 1 algorithms
 crypto ikev2 policy      →  links proposal
 crypto ikev2 keyring     →  per-peer PSK
@@ -73,7 +73,7 @@ copy running-config startup-config
 
 ### IOS-XE configuration blocks pushed (IKEv1)
 
-```
+```text
 crypto isakmp policy     →  Phase 1 algorithms + DH group
 crypto isakmp key        →  pre-shared key per peer
 ip access-list extended  →  interesting traffic (crypto ACL)
@@ -87,7 +87,7 @@ copy running-config startup-config
 
 ## Project Layout
 
-```
+```text
 nautobot-app-custom-tunnel-builder/
 ├── pyproject.toml
 ├── requirements.txt
@@ -132,7 +132,7 @@ Users must have the `extras.run_job` permission. The nav menu item and the form 
 
 After installation, navigate to **Network Tools > VPN > Build IPsec Tunnel** in the Nautobot navigation bar. The form is available at:
 
-```
+```text
 https://<your-nautobot>/plugins/tunnel-builder/
 ```
 
@@ -249,10 +249,10 @@ The redirect after submission lands on Nautobot's standard **Job Result** detail
 
 - **Status** — Pending > Running > Completed / Failed
 - **Log output** — Each step logged (PSK redacted):
-    - Configuration commands generated
-    - SSH connection established
-    - `send_config_set()` output from the device
-    - Confirmation that startup-config was saved
+  - Configuration commands generated
+  - SSH connection established
+  - `send_config_set()` output from the device
+  - Confirmation that startup-config was saved
 
 ---
 
