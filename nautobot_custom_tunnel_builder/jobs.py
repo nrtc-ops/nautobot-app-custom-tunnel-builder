@@ -613,7 +613,7 @@ class PortalBuildIpsecTunnel(Job):
     # Main run method                                                      #
     # ------------------------------------------------------------------ #
 
-    def run(self, tunnel_id, pre_shared_key):  # pylint: disable=arguments-differ
+    def run(self, tunnel_id, pre_shared_key):  # pylint: disable=arguments-differ,too-many-locals
         """Execute the portal-requested IPsec tunnel build."""
         # 1. Load VPNTunnel and extract parameters from custom fields
         try:

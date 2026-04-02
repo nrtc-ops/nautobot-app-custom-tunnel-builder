@@ -14,7 +14,7 @@ from .constants import (
 _GCM_PHASE2_ALGORITHMS = {"esp-gcm 256", "esp-gcm 128"}
 
 
-def profile_to_config_params(
+def profile_to_config_params( # pylint: disable=too-many-locals,too-many-arguments
     vpn_profile,
     remote_peer_ip: str,
     local_network_cidr: str,
