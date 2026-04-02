@@ -3,6 +3,7 @@
 import ipaddress
 import logging
 import os
+import re
 import traceback
 
 from nautobot.apps.jobs import ChoiceVar, IntegerVar, Job, ObjectVar, StringVar, register_jobs
@@ -23,6 +24,55 @@ from .constants import (
 logger = logging.getLogger(__name__)
 
 name = "NRTC Tunnel Builders"  # pylint: disable=invalid-name
+
+# ---------------------------------------------------------------------------
+# IOS-XE error detection
+# ---------------------------------------------------------------------------
+
+_IOSXE_ERROR_PATTERN = re.compile(r"^%\s+.+", re.MULTILINE)
+
+
+class IosXeConfigError(Exception):
+    """Raised when IOS-XE returns error output during config push."""
+
+
+# ---------------------------------------------------------------------------
+# Shared SSH push function
+# ---------------------------------------------------------------------------
+
+
+def push_config_to_device(device_params: dict, commands: list[str], push_logger) -> str:
+    """Push configuration commands to a device via SSH and save config.
+
+    Args:
+        device_params: Netmiko connection parameters dict.
+        commands: List of IOS-XE configuration commands.
+        push_logger: Logger instance for status messages.
+
+    Returns:
+        Raw output from send_config_set.
+
+    Raises:
+        IosXeConfigError: If the device output contains error patterns.
+    """
+    with ConnectHandler(**device_params) as conn:
+        if device_params.get("secret"):
+            conn.enable()
+
+        push_logger.info("Connected. Pushing %d commands.", len(commands))
+        output = conn.send_config_set(commands, cmd_verify=False)
+        push_logger.info("Configuration output:\n%s", output)
+
+        errors = _IOSXE_ERROR_PATTERN.findall(output)
+        if errors:
+            error_msg = "; ".join(errors)
+            push_logger.error("IOS-XE errors detected: %s", error_msg)
+            raise IosXeConfigError(f"Device returned errors: {error_msg}")
+
+        conn.save_config()
+        push_logger.info("Running configuration saved to startup-config.")
+
+    return output
 
 
 # ---------------------------------------------------------------------------
@@ -478,17 +528,7 @@ class BuildIpsecTunnel(Job):
         }
 
         try:
-            with ConnectHandler(**device_params) as conn:
-                if device_params.get("secret"):
-                    conn.enable()
-
-                self.logger.info("Connected. Pushing %d commands.", len(commands))
-                output = conn.send_config_set(commands, cmd_verify=False)
-                self.logger.info("Configuration output:\n%s", output)
-
-                conn.save_config()
-                self.logger.info("Running configuration saved to startup-config.")
-
+            push_config_to_device(device_params, commands, self.logger)
         except Exception as exc:
             self.logger.error(
                 "Failed to configure %s: %s\n%s",
