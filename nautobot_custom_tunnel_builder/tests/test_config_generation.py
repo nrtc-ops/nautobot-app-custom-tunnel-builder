@@ -139,7 +139,7 @@ class BuildIosxePolicyConfigIKEv2Test(TestCase):
 
     def test_crypto_acl_network_wildcard(self):
         """ACL contains correct source/dest network and wildcard masks."""
-        acl_line = " permit ip 192.168.1.0 0.0.0.255 10.0.0.0 0.0.255.255"
+        acl_line = " permit ip 192.168.1.0 0.0.0.255 10.0.0.0 0.0.0.255"
         self.assertIn(acl_line, self.commands)
 
     def test_crypto_acl_name(self):

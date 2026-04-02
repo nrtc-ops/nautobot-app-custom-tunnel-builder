@@ -38,7 +38,8 @@ Code style: ruff (format + lint), pylint, 120-character line limit.
 This is a Nautobot 3.x plugin that pushes **policy-based IPsec configurations** (crypto map + crypto ACL) to Cisco IOS-XE devices via SSH. It does NOT use VTI/route-based tunnels.
 
 **Request flow:**
-```
+
+```text
 Browser form → IpsecTunnelBuilderView (views.py)
   → looks up Job model by module_name + job_class_name
   → JobResult.enqueue_job()

@@ -319,3 +319,5 @@ public
 # Draft Plans
 # **/plans/**
 # docs/plans/
+
+.markdownlint.json

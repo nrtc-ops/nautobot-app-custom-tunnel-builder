@@ -5,7 +5,6 @@ import ipaddress
 from django import forms
 
 from .constants import (
-    get_iosxe_device_queryset,
     IKE_DH_GROUP_CHOICES,
     IKE_VERSION_CHOICES,
     IKEV1_ENCRYPTION_CHOICES,
@@ -14,6 +13,7 @@ from .constants import (
     IKEV2_INTEGRITY_CHOICES,
     IPSEC_ENCRYPTION_CHOICES,
     IPSEC_INTEGRITY_CHOICES,
+    get_iosxe_device_queryset,
 )
 
 # ---------------------------------------------------------------------------

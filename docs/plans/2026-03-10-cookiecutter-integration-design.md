@@ -49,21 +49,24 @@ select = ["E", "F", "W", "I", "N", "UP"]
 ```
 
 ### Files Removed
+
 - `requirements.txt`
 - `uv.lock`
 - `[tool.setuptools.*]` sections from pyproject.toml
 
 ### Files Generated
+
 - `poetry.lock`
 
 ### Files Kept
+
 - `.python-version` (uv python management)
 
 ## Section 2: Development Infrastructure
 
 ### `development/` directory (new)
 
-```
+```text
 development/
 ├── docker-compose.base.yml      # Nautobot service definition
 ├── docker-compose.postgres.yml  # PostgreSQL service
@@ -75,6 +78,7 @@ development/
 ### `tasks.py` (new, root-level invoke file)
 
 Invoke tasks adapted from cookiecutter template:
+
 - Docker: build, start, stop, restart, destroy, logs, cli
 - Linting: ruff, yamllint, pylint
 - Testing: unittest, coverage
@@ -91,6 +95,7 @@ Categories: added, changed, fixed, dependencies, documentation, housekeeping, br
 Replace existing single `release.yml` with all four cookiecutter workflows:
 
 ### `ci.yml`
+
 - ruff format + lint
 - yamllint, markdownlint
 - Poetry lock check
@@ -99,13 +104,16 @@ Replace existing single `release.yml` with all four cookiecutter workflows:
 - Changelog validation (towncrier)
 
 ### `coverage.yml`
+
 - Post-CI workflow for PR coverage comments
 
 ### `release.yml`
+
 - Poetry build with tag/version validation
 - Publish to GitHub release + PyPI (trusted publishing)
 
 ### `upstream_testing.yml`
+
 - Scheduled bi-daily Nautobot compatibility testing
 - Tests against nautobot develop/next/ltm branches
 
@@ -113,7 +121,7 @@ Replace existing single `release.yml` with all four cookiecutter workflows:
 
 ### New layout (cookiecutter convention)
 
-```
+```text
 docs/
 ├── index.md                         # includes README
 ├── admin/
@@ -167,9 +175,11 @@ docs/
 ## Section 5: Other Updates
 
 ### `CLAUDE.md`
+
 - Update commands section (ruff instead of black/flake8, poetry instead of pip, invoke tasks)
 
 ### `.yamllint.yml` (new)
+
 - YAML linting config matching cookiecutter
 
 ### What Does NOT Change

@@ -54,7 +54,9 @@ def profile_to_config_params(
 
     # Phase 2 (IPsec)
     ipsec_enc = NAUTOBOT_TO_IOSXE_PHASE2_ENCRYPTION[phase2.encryption_algorithm[0]]
-    ipsec_integ = "" if ipsec_enc in _GCM_PHASE2_ALGORITHMS else NAUTOBOT_TO_IOSXE_PHASE2_INTEGRITY[phase2.integrity_algorithm[0]]
+    ipsec_integ = (
+        "" if ipsec_enc in _GCM_PHASE2_ALGORITHMS else NAUTOBOT_TO_IOSXE_PHASE2_INTEGRITY[phase2.integrity_algorithm[0]]
+    )
 
     params = {
         "ike_version": ike_version,
@@ -74,19 +76,23 @@ def profile_to_config_params(
     }
 
     if ike_version == "ikev2":
-        params.update({
-            "ikev2_encryption": NAUTOBOT_TO_IOSXE_PHASE1_ENCRYPTION[phase1.encryption_algorithm[0]],
-            "ikev2_integrity": NAUTOBOT_TO_IOSXE_PHASE1_INTEGRITY[phase1.integrity_algorithm[0]],
-            "ikev2_proposal_name": f"PORTAL-PROP-{sequence}",
-            "ikev2_policy_name": f"PORTAL-POL-{sequence}",
-            "ikev2_keyring_name": f"PORTAL-KR-{sequence}",
-            "ikev2_profile_name": f"PORTAL-PROF-{sequence}",
-        })
+        params.update(
+            {
+                "ikev2_encryption": NAUTOBOT_TO_IOSXE_PHASE1_ENCRYPTION[phase1.encryption_algorithm[0]],
+                "ikev2_integrity": NAUTOBOT_TO_IOSXE_PHASE1_INTEGRITY[phase1.integrity_algorithm[0]],
+                "ikev2_proposal_name": f"PORTAL-PROP-{sequence}",
+                "ikev2_policy_name": f"PORTAL-POL-{sequence}",
+                "ikev2_keyring_name": f"PORTAL-KR-{sequence}",
+                "ikev2_profile_name": f"PORTAL-PROF-{sequence}",
+            }
+        )
     else:
-        params.update({
-            "ikev1_encryption": NAUTOBOT_TO_IOSXE_IKEV1_ENCRYPTION[phase1.encryption_algorithm[0]],
-            "ikev1_hash": NAUTOBOT_TO_IOSXE_IKEV1_HASH[phase1.integrity_algorithm[0]],
-            "isakmp_policy_priority": sequence,
-        })
+        params.update(
+            {
+                "ikev1_encryption": NAUTOBOT_TO_IOSXE_IKEV1_ENCRYPTION[phase1.encryption_algorithm[0]],
+                "ikev1_hash": NAUTOBOT_TO_IOSXE_IKEV1_HASH[phase1.integrity_algorithm[0]],
+                "isakmp_policy_priority": sequence,
+            }
+        )
 
     return params

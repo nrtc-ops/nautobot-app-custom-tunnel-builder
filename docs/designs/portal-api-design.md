@@ -96,7 +96,7 @@ Keep this plugin for internal ops. Create `nautobot-vpn-portal-api` for the port
 
 The custom endpoint gives a clean contract between the portal and Nautobot. It handles PSK lifecycle properly, provides a portal-friendly response format, and keeps everything in one codebase. The plugin already owns the config generation, SSH push, and internal form. Adding an API surface is a natural extension, not scope creep.
 
-### Key components to build:
+### Key Components to Build
 
 1. **`api/` module** — Django REST Framework viewset + serializer
    - `PortalTunnelRequestSerializer`: validates simplified inputs (vpn_profile, remote_peer_ip, device, protected_network_cidr)
@@ -158,6 +158,7 @@ The custom endpoint gives a clean contract between the portal and Nautobot. It h
 ### Crypto map sequence collision strategy
 
 When multiple tunnels exist on the same device, sequence numbers must not collide. Strategy:
+
 - Query existing `VPNTunnel` objects for the target device
 - Extract the highest crypto map sequence in use
 - New tunnel gets `max(existing_sequences) + 10` (or 10 if no existing tunnels)
@@ -185,7 +186,7 @@ If the SSH connection takes longer than 45 seconds, the endpoint returns `504 Ga
 | SSH timeout | `504 Gateway Timeout` | `{"error": "Device connection timed out"}` |
 | Duplicate tunnel (same device + peer) | `409 Conflict` | `{"error": "Tunnel already exists", "tunnel_id": "..."}` |
 
-### What NOT to build (yet):
+### What NOT to Build (Yet)
 
 - Rollback on partial failure (config pushed but VPN objects failed, or vice versa)
 - Tunnel teardown / lifecycle management

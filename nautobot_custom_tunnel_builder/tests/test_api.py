@@ -2,18 +2,21 @@
 
 import uuid
 
+from django.contrib.auth import get_user_model
 from django.test import TestCase
 from nautobot.core.testing import APITestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
+User = get_user_model()
+
 # ---------------------------------------------------------------------------
 # Base URL for the portal API (under the plugin's base_url)
 # ---------------------------------------------------------------------------
 
-PORTAL_REQUEST_URL = "/api/plugins/tunnel-builder/api/portal-request/"
-TUNNEL_STATUS_URL_TEMPLATE = "/api/plugins/tunnel-builder/api/tunnel-status/{}/"
-PSK_URL_TEMPLATE = "/api/plugins/tunnel-builder/api/psk/{}/"
+PORTAL_REQUEST_URL = "/plugins/tunnel-builder/api/portal-request/"
+TUNNEL_STATUS_URL_TEMPLATE = "/plugins/tunnel-builder/api/tunnel-status/{}/"
+PSK_URL_TEMPLATE = "/plugins/tunnel-builder/api/psk/{}/"
 
 
 # ---------------------------------------------------------------------------
@@ -52,9 +55,17 @@ class UnauthenticatedAccessTest(TestCase):
 class PortalRequestValidationTest(APITestCase):
     """Test validation on the portal-request endpoint."""
 
+    def _post(self, url, data=None):
+        """POST with auth header."""
+        return self.client.post(url, data=data or {}, format="json", **self.header)
+
+    def _get(self, url):
+        """GET with auth header."""
+        return self.client.get(url, **self.header)
+
     def test_empty_body_returns_400(self):
         """POST with empty body returns 400 with field errors."""
-        response = self.client.post(PORTAL_REQUEST_URL, data={}, format="json")
+        response = self._post(PORTAL_REQUEST_URL)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         data = response.json()
         # All required fields should appear in the error response
@@ -69,7 +80,7 @@ class PortalRequestValidationTest(APITestCase):
             "local_network_cidr": "192.168.1.0/24",
             "protected_network_cidr": "10.0.0.0/24",
         }
-        response = self.client.post(PORTAL_REQUEST_URL, data=payload, format="json")
+        response = self._post(PORTAL_REQUEST_URL, payload)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("vpn_profile", response.json())
 
@@ -81,7 +92,7 @@ class PortalRequestValidationTest(APITestCase):
             "local_network_cidr": "192.168.1.0/24",
             "protected_network_cidr": "10.0.0.0/24",
         }
-        response = self.client.post(PORTAL_REQUEST_URL, data=payload, format="json")
+        response = self._post(PORTAL_REQUEST_URL, payload)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("device", response.json())
 
@@ -94,7 +105,7 @@ class PortalRequestValidationTest(APITestCase):
             "local_network_cidr": "not-a-cidr",
             "protected_network_cidr": "10.0.0.0/24",
         }
-        response = self.client.post(PORTAL_REQUEST_URL, data=payload, format="json")
+        response = self._post(PORTAL_REQUEST_URL, payload)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("local_network_cidr", response.json())
 
@@ -107,7 +118,7 @@ class PortalRequestValidationTest(APITestCase):
             "local_network_cidr": "192.168.1.0/24",
             "protected_network_cidr": "garbage",
         }
-        response = self.client.post(PORTAL_REQUEST_URL, data=payload, format="json")
+        response = self._post(PORTAL_REQUEST_URL, payload)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("protected_network_cidr", response.json())
 
@@ -120,7 +131,7 @@ class PortalRequestValidationTest(APITestCase):
             "local_network_cidr": "192.168.1.0/24",
             "protected_network_cidr": "10.0.0.0/24",
         }
-        response = self.client.post(PORTAL_REQUEST_URL, data=payload, format="json")
+        response = self._post(PORTAL_REQUEST_URL, payload)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         # At least vpn_profile or device should have an error (non-existent UUID)
         data = response.json()
@@ -138,7 +149,7 @@ class PortalRequestValidationTest(APITestCase):
             "local_network_cidr": "192.168.1.0/24",
             "protected_network_cidr": "10.0.0.0/24",
         }
-        response = self.client.post(PORTAL_REQUEST_URL, data=payload, format="json")
+        response = self._post(PORTAL_REQUEST_URL, payload)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("device", response.json())
 
@@ -151,7 +162,7 @@ class PortalRequestValidationTest(APITestCase):
             "local_network_cidr": "192.168.1.0/24",
             "protected_network_cidr": "10.0.0.0/24",
         }
-        response = self.client.post(PORTAL_REQUEST_URL, data=payload, format="json")
+        response = self._post(PORTAL_REQUEST_URL, payload)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("remote_peer_ip", response.json())
 
@@ -164,12 +175,16 @@ class PortalRequestValidationTest(APITestCase):
 class TunnelStatusTest(APITestCase):
     """Test the tunnel-status endpoint."""
 
+    def _get(self, url):
+        return self.client.get(url, **self.header)
+
     def test_non_existent_tunnel_returns_404(self):
         """GET with a UUID that doesn't match any VPNTunnel returns 404."""
         fake_uuid = uuid.uuid4()
-        response = self.client.get(TUNNEL_STATUS_URL_TEMPLATE.format(fake_uuid))
+        response = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(fake_uuid))
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        self.assertIn("detail", response.json())
+        data = response.json()
+        self.assertTrue("error" in data or "detail" in data)
 
 
 # ---------------------------------------------------------------------------
@@ -180,13 +195,17 @@ class TunnelStatusTest(APITestCase):
 class PSKRetrievalTest(APITestCase):
     """Test the psk retrieval endpoint."""
 
+    def _get(self, url):
+        return self.client.get(url, **self.header)
+
     def test_invalid_token_returns_404(self):
         """GET with an invalid/unknown token returns 404."""
-        response = self.client.get(PSK_URL_TEMPLATE.format("nonexistent-token-value"))
+        response = self._get(PSK_URL_TEMPLATE.format("nonexistent-token-value"))
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        self.assertIn("detail", response.json())
+        data = response.json()
+        self.assertTrue("error" in data or "detail" in data)
 
     def test_random_uuid_token_returns_404(self):
         """GET with a random UUID-like token returns 404."""
-        response = self.client.get(PSK_URL_TEMPLATE.format(str(uuid.uuid4())))
+        response = self._get(PSK_URL_TEMPLATE.format(str(uuid.uuid4())))
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

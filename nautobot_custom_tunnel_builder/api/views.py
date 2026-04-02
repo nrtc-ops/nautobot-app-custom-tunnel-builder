@@ -5,10 +5,12 @@ import secrets
 
 from django.db import transaction
 from django.db.models import Max
+from nautobot.core.api.authentication import TokenAuthentication
 from nautobot.extras.models import Job as JobModel
 from nautobot.extras.models import JobResult, Status
 from nautobot.vpn.models import VPNTunnel, VPNTunnelEndpoint
 from rest_framework import status
+from rest_framework.authentication import SessionAuthentication
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.reverse import reverse
@@ -22,6 +24,7 @@ logger = logging.getLogger(__name__)
 class PortalTunnelRequestView(APIView):
     """Accept a portal tunnel provisioning request and enqueue the build job."""
 
+    authentication_classes = [TokenAuthentication, SessionAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request):  # pylint: disable=too-many-locals
@@ -151,6 +154,7 @@ class PortalTunnelRequestView(APIView):
 class TunnelStatusView(APIView):
     """Return the current status of a portal-created VPN tunnel."""
 
+    authentication_classes = [TokenAuthentication, SessionAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request, tunnel_id):
@@ -185,6 +189,7 @@ class TunnelStatusView(APIView):
 class PSKRetrievalView(APIView):
     """One-time PSK retrieval by token. Returns 410 Gone if already retrieved."""
 
+    authentication_classes = [TokenAuthentication, SessionAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request, token):
