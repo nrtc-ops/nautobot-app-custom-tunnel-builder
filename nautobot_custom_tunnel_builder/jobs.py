@@ -8,6 +8,8 @@ import traceback
 
 from nautobot.apps.jobs import ChoiceVar, IntegerVar, Job, ObjectVar, StringVar, register_jobs
 from nautobot.dcim.models import Device
+from nautobot.extras.models import Status
+from nautobot.vpn.models import VPNTunnel
 from netmiko import ConnectHandler
 
 from .constants import (
@@ -20,6 +22,7 @@ from .constants import (
     IPSEC_ENCRYPTION_CHOICES,
     IPSEC_INTEGRITY_CHOICES,
 )
+from .mapping import profile_to_config_params
 
 logger = logging.getLogger(__name__)
 
@@ -551,4 +554,182 @@ class BuildIpsecTunnel(Job):
         )
 
 
-register_jobs(BuildIpsecTunnel)
+class PortalBuildIpsecTunnel(Job):
+    """Build a portal-requested IPsec tunnel from VPNTunnel custom field data.
+
+    This job is enqueued by the portal API. It reads tunnel parameters from the
+    VPNTunnel's custom fields, maps the VPN profile to IOS-XE commands, pushes
+    the configuration, and updates the tunnel status.
+    """
+
+    class Meta:  # pylint: disable=too-few-public-methods
+        """Meta attributes for the Job."""
+
+        name = "Portal: Build Policy-Based IPsec Tunnel (IOS-XE)"
+        description = "API-triggered job that configures a policy-based IPsec tunnel from a VPNTunnel record."
+        hidden = True
+        has_sensitive_variables = True
+
+    tunnel_id = StringVar(
+        label="VPN Tunnel ID",
+        description="UUID of the VPNTunnel to configure.",
+        max_length=36,
+    )
+
+    pre_shared_key = StringVar(
+        label="Pre-Shared Key",
+        description="IKE pre-shared key (sensitive).",
+        max_length=128,
+    )
+
+    # ------------------------------------------------------------------ #
+    # Helpers                                                              #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _get_management_ip(device: Device) -> str:
+        """Return the device's primary IP as a plain string (no prefix length)."""
+        if not device.primary_ip:
+            raise ValueError(
+                f"Device '{device.name}' has no primary IP configured in Nautobot. "
+                "Set a primary IPv4 address before running this job."
+            )
+        return str(device.primary_ip.address.ip)
+
+    @staticmethod
+    def _get_netmiko_platform(device: Device) -> str:
+        """Map the Nautobot platform network driver to a Netmiko device_type."""
+        platform_map = {
+            "cisco_ios": "cisco_ios",
+            "cisco_xe": "cisco_xe",
+            "cisco_iosxe": "cisco_xe",
+        }
+        driver = ""
+        if device.platform:
+            driver = (device.platform.network_driver or "").lower()
+        return platform_map.get(driver, "cisco_ios")
+
+    # ------------------------------------------------------------------ #
+    # Main run method                                                      #
+    # ------------------------------------------------------------------ #
+
+    def run(self, tunnel_id, pre_shared_key):  # pylint: disable=arguments-differ
+        """Execute the portal-requested IPsec tunnel build."""
+        # 1. Load VPNTunnel and extract parameters from custom fields
+        try:
+            tunnel = VPNTunnel.objects.get(pk=tunnel_id)
+        except VPNTunnel.DoesNotExist:
+            self.logger.error("VPNTunnel with id '%s' not found.", tunnel_id)
+            raise
+
+        # Get the device from the first (hub) endpoint
+        endpoints = tunnel.vpntunnelendpoint_set.all()
+        hub_endpoint = endpoints.filter(source_ip_address__isnull=False).first()
+        if not hub_endpoint:
+            self.logger.error("No hub endpoint with source IP found on tunnel '%s'.", tunnel.name)
+            raise ValueError(f"Tunnel '{tunnel.name}' has no hub endpoint with a source IP address.")
+
+        device = hub_endpoint.source_ip_address.assigned_object.parent
+        self.logger.info("Device resolved: %s", device.name)
+
+        # Read crypto map name from device custom fields (default: CRYPTO-MAP)
+        crypto_map_name = device.cf.get("crypto_map_name", "CRYPTO-MAP") or "CRYPTO-MAP"
+
+        # Read tunnel parameters from custom fields
+        cf = tunnel._custom_field_data  # pylint: disable=protected-access
+        sequence = cf.get("crypto_map_sequence")
+        remote_peer_ip = cf.get("remote_peer_ip")
+        local_network_cidr = cf.get("local_network_cidr")
+        protected_network_cidr = cf.get("protected_network_cidr")
+
+        self.logger.info(
+            "Tunnel '%s': seq=%s, peer=%s, local=%s, protected=%s",
+            tunnel.name,
+            sequence,
+            remote_peer_ip,
+            local_network_cidr,
+            protected_network_cidr,
+        )
+
+        # 2. Map VPN profile to config params
+        vpn_profile = tunnel.vpn_profile
+        if not vpn_profile:
+            self.logger.error("Tunnel '%s' has no VPN profile assigned.", tunnel.name)
+            raise ValueError(f"Tunnel '{tunnel.name}' has no VPN profile assigned.")
+
+        params = profile_to_config_params(
+            vpn_profile=vpn_profile,
+            remote_peer_ip=remote_peer_ip,
+            local_network_cidr=local_network_cidr,
+            protected_network_cidr=protected_network_cidr,
+            crypto_map_name=crypto_map_name,
+            sequence=sequence,
+        )
+        params["pre_shared_key"] = pre_shared_key
+
+        # 3. Build IOS-XE configuration commands
+        commands = build_iosxe_policy_config(params)
+
+        # Remove interface/crypto-map-apply lines (last 2 if they start with "interface ")
+        # The crypto map is already applied to the device; we only add new entries.
+        if len(commands) >= 2 and commands[-2].strip().startswith("interface "):
+            commands = commands[:-2]
+
+        self.logger.info(
+            "Generated %d configuration lines for tunnel '%s'.",
+            len(commands),
+            tunnel.name,
+        )
+
+        # Log config with redacted PSK
+        redacted = [
+            line.replace(pre_shared_key, "***REDACTED***") if pre_shared_key in line else line for line in commands
+        ]
+        self.logger.debug("Configuration preview:\n%s", "\n".join(redacted))
+
+        # 4. Build device connection parameters and push config
+        mgmt_ip = self._get_management_ip(device)
+        device_type = self._get_netmiko_platform(device)
+
+        device_params = {
+            "device_type": device_type,
+            "host": mgmt_ip,
+            "username": os.environ.get("NAUTOBOT_DEVICE_USERNAME", "admin"),
+            "password": os.environ.get("NAUTOBOT_DEVICE_PASSWORD", ""),
+            "secret": os.environ.get("NAUTOBOT_DEVICE_ENABLE_SECRET", ""),
+            "port": int(os.environ.get("NAUTOBOT_DEVICE_SSH_PORT", 22)),
+            "timeout": 30,
+            "session_log": None,
+        }
+
+        try:
+            push_config_to_device(device_params, commands, self.logger)
+        except Exception as exc:
+            self.logger.error(
+                "Failed to configure %s for tunnel '%s': %s\n%s",
+                device.name,
+                tunnel.name,
+                exc,
+                traceback.format_exc(),
+            )
+            # Set tunnel status to Decommissioning (closest to "failed")
+            decommissioning = Status.objects.get_for_model(VPNTunnel).get(name="Decommissioning")
+            tunnel.status = decommissioning
+            tunnel.save()
+            raise
+
+        # 5. Update tunnel status to Active on success
+        active_status = Status.objects.get_for_model(VPNTunnel).get(name="Active")
+        tunnel.status = active_status
+        tunnel.save()
+
+        self.logger.info(
+            "Portal IPsec tunnel '%s' successfully configured on %s.",
+            tunnel.name,
+            device.name,
+        )
+
+        return f"Portal tunnel '{tunnel.name}' configured on {device.name} ({mgmt_ip})."
+
+
+register_jobs(BuildIpsecTunnel, PortalBuildIpsecTunnel)
