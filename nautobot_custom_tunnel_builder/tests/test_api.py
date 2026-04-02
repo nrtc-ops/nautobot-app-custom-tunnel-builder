@@ -52,7 +52,7 @@ class UnauthenticatedAccessTest(TestCase):
 # ---------------------------------------------------------------------------
 
 
-class PortalRequestValidationTest(APITestCase): # pylint: disable=too-many-ancestors
+class PortalRequestValidationTest(APITestCase):  # pylint: disable=too-many-ancestors
     """Test validation on the portal-request endpoint."""
 
     def _post(self, url, data=None):
@@ -172,7 +172,7 @@ class PortalRequestValidationTest(APITestCase): # pylint: disable=too-many-ances
 # ---------------------------------------------------------------------------
 
 
-class TunnelStatusTest(APITestCase): # pylint: disable=too-many-ancestors
+class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
     """Test the tunnel-status endpoint."""
 
     def _get(self, url):
@@ -192,7 +192,7 @@ class TunnelStatusTest(APITestCase): # pylint: disable=too-many-ancestors
 # ---------------------------------------------------------------------------
 
 
-class PSKRetrievalTest(APITestCase): # pylint: disable=too-many-ancestors
+class PSKRetrievalTest(APITestCase):  # pylint: disable=too-many-ancestors
     """Test the psk retrieval endpoint."""
 
     def _get(self, url):
