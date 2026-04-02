@@ -317,5 +317,5 @@ public
 .ruff_cache/
 
 # Draft Plans
-**/plans/**
-docs/plans/
+# **/plans/**
+# docs/plans/
