@@ -1,0 +1,1 @@
+Added Portal API surface for requesting policy-based IPsec tunnel builds via REST endpoints, including tunnel creation, status polling, and one-time PSK retrieval. Added PortalBuildIpsecTunnel job, VPNProfile-to-IOS-XE mapping utilities, algorithm translation maps, and a shared SSH push helper with IOS-XE error detection.

@@ -249,10 +249,10 @@ The redirect after submission lands on Nautobot's standard **Job Result** detail
 
 - **Status** — Pending > Running > Completed / Failed
 - **Log output** — Each step logged (PSK redacted):
-  - Configuration commands generated
-  - SSH connection established
-  - `send_config_set()` output from the device
-  - Confirmation that startup-config was saved
+    - Configuration commands generated
+    - SSH connection established
+    - `send_config_set()` output from the device
+    - Confirmation that startup-config was saved
 
 ---
 

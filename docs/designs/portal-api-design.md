@@ -99,9 +99,9 @@ The custom endpoint gives a clean contract between the portal and Nautobot. It h
 ### Key Components to Build
 
 1. **`api/` module** — Django REST Framework viewset + serializer
-   - `PortalTunnelRequestSerializer`: validates simplified inputs (vpn_profile, remote_peer_ip, device, protected_network_cidr)
-   - `PortalTunnelRequestView`: POST endpoint, creates VPN objects, triggers config push, returns response with PSK retrieval URL
-   - URL: `/api/plugins/tunnel-builder/portal-request/`
+    - `PortalTunnelRequestSerializer`: validates simplified inputs (vpn_profile, remote_peer_ip, device, protected_network_cidr)
+    - `PortalTunnelRequestView`: POST endpoint, creates VPN objects, triggers config push, returns response with PSK retrieval URL
+    - URL: `/api/plugins/tunnel-builder/portal-request/`
 
 2. **`profile_to_config_params()` mapping function**
 
@@ -136,16 +136,16 @@ The custom endpoint gives a clean contract between the portal and Nautobot. It h
    The naming/sequencing params (crypto_map_name, ACL name, transform-set name, IKEv2 names) have no VPNProfile source. They are operational/device-specific. The mapping function auto-generates them using a per-device sequence counter tracked via VPNTunnel objects in Nautobot.
 
 3. **PSK lifecycle**
-   - Prototype: `secrets.token_urlsafe(32)`, returned in response body
-   - Production: generate PSK, store in Nautobot Secrets, return one-time retrieval endpoint (`GET /api/plugins/tunnel-builder/psk/<token>/`) with 15-minute TTL, single-use
+    - Prototype: `secrets.token_urlsafe(32)`, returned in response body
+    - Production: generate PSK, store in Nautobot Secrets, return one-time retrieval endpoint (`GET /api/plugins/tunnel-builder/psk/<token>/`) with 15-minute TTL, single-use
 
-   **PSK retrieval endpoint spec (production):**
-   - Token: `secrets.token_urlsafe(48)` (384 bits of entropy)
-   - Storage: Django cache backend (Redis/memcached), key = token, value = encrypted PSK, TTL = 900s (15 min)
-   - Auth: token-in-URL is sole auth (bearer token in URL path). Rate limit: 10 requests/min per IP.
-   - Success: `200 OK` with `{"psk": "..."}`. Token deleted from cache after retrieval (single-use).
-   - Expired/used: `410 Gone` with `{"error": "PSK retrieval link has expired or was already used"}`
-   - Invalid token: `404 Not Found`
+    **PSK retrieval endpoint spec (production):**
+    - Token: `secrets.token_urlsafe(48)` (384 bits of entropy)
+    - Storage: Django cache backend (Redis/memcached), key = token, value = encrypted PSK, TTL = 900s (15 min)
+    - Auth: token-in-URL is sole auth (bearer token in URL path). Rate limit: 10 requests/min per IP.
+    - Success: `200 OK` with `{"psk": "..."}`. Token deleted from cache after retrieval (single-use).
+    - Expired/used: `410 Gone` with `{"error": "PSK retrieval link has expired or was already used"}`
+    - Invalid token: `404 Not Found`
 
 4. **VPN model object creation** — creates `VPNTunnel` + `VPNTunnelEndpoint` objects. Tunnel status tracks provisioning state (`"active"` on success, `"failed"` on error).
 
