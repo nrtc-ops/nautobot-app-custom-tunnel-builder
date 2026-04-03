@@ -254,12 +254,12 @@ Instead of querying `_custom_field_data__remote_peer_ip`, query native fields:
 - `crypto_map_name` from hub endpoint custom field
 - `pre_shared_key` passed as job argument (same as today)
 - `wan_interface` is not needed. Neither the portal job nor the form job should use it. The crypto map is already applied to the concentrator's WAN interface. Both jobs strip the interface/crypto-map-apply lines from generated config. As part of this refactor, `wan_interface` must be removed from:
-  - `forms.py:89` (form field definition)
-  - `views.py:71` (form data passed to job)
-  - `jobs.py:194` (config generation uses it), `jobs.py:267` (StringVar), `jobs.py:437,473` (job run)
-  - `jobs.py:build_iosxe_policy_config()` (the `interface {wan_interface}` + `crypto map` apply lines)
-  - `tests/test_config_generation.py:20,49` (test fixtures), `tests/test_config_generation.py:172,229` (wan_interface test cases)
-  - `tests/test_mapping.py:86-88` (test asserting wan_interface not in output, can be removed)
+    - `forms.py:89` (form field definition)
+    - `views.py:71` (form data passed to job)
+    - `jobs.py:194` (config generation uses it), `jobs.py:267` (StringVar), `jobs.py:437,473` (job run)
+    - `jobs.py:build_iosxe_policy_config()` (the `interface {wan_interface}` + `crypto map` apply lines)
+    - `tests/test_config_generation.py:20,49` (test fixtures), `tests/test_config_generation.py:172,229` (wan_interface test cases)
+    - `tests/test_mapping.py:86-88` (test asserting wan_interface not in output, can be removed)
 
 Note: `mapping.py` (`profile_to_config_params`) will need its signature updated. It currently accepts `crypto_map_name` and `sequence` as direct arguments. In the refactored version, these come from the cloned VPNProfile's custom fields and the hub endpoint's custom field respectively. The function should accept the VPNProfile and hub endpoint objects, or the values extracted from them.
 

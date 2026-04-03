@@ -86,14 +86,6 @@ class IpsecTunnelForm(forms.Form):
     # ------------------------------------------------------------------ #
     # Crypto map                                                           #
     # ------------------------------------------------------------------ #
-    wan_interface = forms.CharField(
-        label="WAN Interface",
-        max_length=64,
-        initial="GigabitEthernet1",
-        help_text="Physical interface where the crypto map will be applied.",
-        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "GigabitEthernet1"}),
-    )
-
     crypto_map_name = forms.CharField(
         label="Crypto Map Name",
         max_length=64,

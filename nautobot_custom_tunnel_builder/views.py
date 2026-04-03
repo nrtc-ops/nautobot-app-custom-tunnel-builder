@@ -68,7 +68,6 @@ class IpsecTunnelBuilderView(LoginRequiredMixin, PermissionRequiredMixin, View):
             "local_network": data["local_network"],
             "remote_network": data["remote_network"],
             "crypto_acl_name": data["crypto_acl_name"],
-            "wan_interface": data["wan_interface"],
             "crypto_map_name": data["crypto_map_name"],
             "crypto_map_sequence": data["crypto_map_sequence"],
             "ike_dh_group": data["ike_dh_group"],

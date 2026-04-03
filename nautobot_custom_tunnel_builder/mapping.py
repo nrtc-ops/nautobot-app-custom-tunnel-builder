@@ -39,11 +39,11 @@ def profile_to_config_params(  # pylint: disable=too-many-locals,too-many-argume
         ValueError: If the profile has no Phase 1 or Phase 2 policy assignment.
         KeyError: If an algorithm value has no IOS-XE translation.
     """
-    p1_assignment = vpn_profile.vpnprofilephase1policyassignment_set.order_by("weight").first()
+    p1_assignment = vpn_profile.vpn_profile_phase1_policy_assignments.order_by("weight").first()
     if not p1_assignment:
         raise ValueError(f"VPNProfile '{vpn_profile}' has no Phase 1 policy assignment.")
 
-    p2_assignment = vpn_profile.vpnprofilephase2policyassignment_set.order_by("weight").first()
+    p2_assignment = vpn_profile.vpn_profile_phase2_policy_assignments.order_by("weight").first()
     if not p2_assignment:
         raise ValueError(f"VPNProfile '{vpn_profile}' has no Phase 2 policy assignment.")
 

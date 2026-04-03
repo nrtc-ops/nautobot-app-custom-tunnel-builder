@@ -190,10 +190,6 @@ def build_iosxe_policy_config(data: dict) -> list[str]:
         commands.append(f" set ikev2-profile {data['ikev2_profile_name']}")
     commands.append(f" match address {acl_name}")
 
-    # Apply crypto map to WAN interface
-    commands.append(f"interface {data['wan_interface']}")
-    commands.append(f" crypto map {map_name}")
-
     return commands
 
 
@@ -264,13 +260,6 @@ class BuildIpsecTunnel(Job):
     )
 
     # Crypto map
-    wan_interface = StringVar(
-        description="Physical interface where the crypto map is applied (e.g. GigabitEthernet1).",
-        label="WAN Interface",
-        default="GigabitEthernet1",
-        max_length=64,
-    )
-
     crypto_map_name = StringVar(
         label="Crypto Map Name",
         default="CRYPTO-MAP",
@@ -434,7 +423,6 @@ class BuildIpsecTunnel(Job):
         local_network,
         remote_network,
         crypto_acl_name,
-        wan_interface,
         crypto_map_name,
         crypto_map_sequence,
         ike_dh_group,
@@ -470,7 +458,6 @@ class BuildIpsecTunnel(Job):
             "local_network": local_network,
             "remote_network": remote_network,
             "crypto_acl_name": crypto_acl_name,
-            "wan_interface": wan_interface,
             "crypto_map_name": crypto_map_name,
             "crypto_map_sequence": crypto_map_sequence,
             "ike_dh_group": ike_dh_group,
@@ -613,7 +600,7 @@ class PortalBuildIpsecTunnel(Job):
     # Main run method                                                      #
     # ------------------------------------------------------------------ #
 
-    def run(self, tunnel_id, pre_shared_key):  # pylint: disable=arguments-differ,too-many-locals
+    def run(self, tunnel_id, pre_shared_key):  # pylint: disable=arguments-differ,too-many-locals,too-many-statements
         """Execute the portal-requested IPsec tunnel build."""
         # 1. Load VPNTunnel and extract parameters from custom fields
         try:
@@ -622,25 +609,48 @@ class PortalBuildIpsecTunnel(Job):
             self.logger.error("VPNTunnel with id '%s' not found.", tunnel_id)
             raise
 
-        # Get the device from the first (hub) endpoint
-        endpoints = tunnel.vpntunnelendpoint_set.all()
-        hub_endpoint = endpoints.filter(source_ip_address__isnull=False).first()
-        if not hub_endpoint:
+        # Get hub and spoke endpoints
+        hub_endpoint = tunnel.endpoint_a
+        spoke_endpoint = tunnel.endpoint_z
+
+        if not hub_endpoint or not hub_endpoint.source_ipaddress:
             self.logger.error("No hub endpoint with source IP found on tunnel '%s'.", tunnel.name)
             raise ValueError(f"Tunnel '{tunnel.name}' has no hub endpoint with a source IP address.")
+        if not spoke_endpoint or not spoke_endpoint.source_ipaddress:
+            self.logger.error("No spoke endpoint with source IP found on tunnel '%s'.", tunnel.name)
+            raise ValueError(f"Tunnel '{tunnel.name}' has no spoke endpoint with a source IP address.")
 
-        device = hub_endpoint.source_ip_address.assigned_object.parent
+        # Resolve device from hub endpoint
+        device = hub_endpoint.source_ipaddress.assigned_object.parent
         self.logger.info("Device resolved: %s", device.name)
 
-        # Read crypto map name from device custom fields (default: CRYPTO-MAP)
-        crypto_map_name = device.cf.get("crypto_map_name", "CRYPTO-MAP") or "CRYPTO-MAP"
+        # Read parameters from native objects
+        remote_peer_ip = str(spoke_endpoint.source_ipaddress.address.ip)
 
-        # Read tunnel parameters from custom fields
-        cf = tunnel._custom_field_data  # pylint: disable=protected-access
-        sequence = cf.get("crypto_map_sequence")
-        remote_peer_ip = cf.get("remote_peer_ip")
-        local_network_cidr = cf.get("local_network_cidr")
-        protected_network_cidr = cf.get("protected_network_cidr")
+        hub_prefix = hub_endpoint.protected_prefixes.first()
+        spoke_prefix = spoke_endpoint.protected_prefixes.first()
+        if not hub_prefix:
+            raise ValueError(f"Hub endpoint on tunnel '{tunnel.name}' has no protected prefix.")
+        if not spoke_prefix:
+            raise ValueError(f"Spoke endpoint on tunnel '{tunnel.name}' has no protected prefix.")
+
+        local_network_cidr = str(hub_prefix.prefix)
+        protected_network_cidr = str(spoke_prefix.prefix)
+
+        # Read custom fields from VPNProfile and hub endpoint
+        vpn_profile = tunnel.vpn_profile
+        if not vpn_profile:
+            self.logger.error("Tunnel '%s' has no VPN profile assigned.", tunnel.name)
+            raise ValueError(f"Tunnel '{tunnel.name}' has no VPN profile assigned.")
+
+        profile_cf = vpn_profile._custom_field_data  # pylint: disable=protected-access
+        sequence = profile_cf.get("custom_tunnel_builder_crypto_map_sequence")
+        crypto_map_name = (
+            hub_endpoint._custom_field_data.get(  # pylint: disable=protected-access
+                "custom_tunnel_builder_crypto_map_name", "VPN"
+            )
+            or "VPN"
+        )
 
         self.logger.info(
             "Tunnel '%s': seq=%s, peer=%s, local=%s, protected=%s",
@@ -652,11 +662,6 @@ class PortalBuildIpsecTunnel(Job):
         )
 
         # 2. Map VPN profile to config params
-        vpn_profile = tunnel.vpn_profile
-        if not vpn_profile:
-            self.logger.error("Tunnel '%s' has no VPN profile assigned.", tunnel.name)
-            raise ValueError(f"Tunnel '{tunnel.name}' has no VPN profile assigned.")
-
         params = profile_to_config_params(
             vpn_profile=vpn_profile,
             remote_peer_ip=remote_peer_ip,
@@ -669,11 +674,6 @@ class PortalBuildIpsecTunnel(Job):
 
         # 3. Build IOS-XE configuration commands
         commands = build_iosxe_policy_config(params)
-
-        # Remove interface/crypto-map-apply lines (last 2 if they start with "interface ")
-        # The crypto map is already applied to the device; we only add new entries.
-        if len(commands) >= 2 and commands[-2].strip().startswith("interface "):
-            commands = commands[:-2]
 
         self.logger.info(
             "Generated %d configuration lines for tunnel '%s'.",

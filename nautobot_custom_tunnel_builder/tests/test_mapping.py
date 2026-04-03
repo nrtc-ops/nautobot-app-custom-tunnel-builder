@@ -34,8 +34,8 @@ def _make_profile(phase1=None, phase2=None):
     p1_assignment.vpn_phase1_policy = phase1 or _make_phase1_policy()
     p2_assignment = MagicMock()
     p2_assignment.vpn_phase2_policy = phase2 or _make_phase2_policy()
-    profile.vpnprofilephase1policyassignment_set.order_by.return_value.first.return_value = p1_assignment
-    profile.vpnprofilephase2policyassignment_set.order_by.return_value.first.return_value = p2_assignment
+    profile.vpn_profile_phase1_policy_assignments.order_by.return_value.first.return_value = p1_assignment
+    profile.vpn_profile_phase2_policy_assignments.order_by.return_value.first.return_value = p2_assignment
     return profile
 
 
@@ -83,10 +83,6 @@ class ProfileToConfigParamsIKEv2Test(TestCase):
         self.assertEqual(result["ipsec_encryption"], "esp-gcm 256")
         self.assertEqual(result["ipsec_integrity"], "")
 
-    def test_no_wan_interface_in_output(self):
-        result = profile_to_config_params(vpn_profile=_make_profile(), **_COMMON_KWARGS)
-        self.assertNotIn("wan_interface", result)
-
 
 class ProfileToConfigParamsIKEv1Test(TestCase):
     """Test IKEv1 profile mapping."""
@@ -106,14 +102,14 @@ class ProfileToConfigParamsEdgeCasesTest(TestCase):
 
     def test_missing_phase1_raises(self):
         profile = MagicMock()
-        profile.vpnprofilephase1policyassignment_set.order_by.return_value.first.return_value = None
+        profile.vpn_profile_phase1_policy_assignments.order_by.return_value.first.return_value = None
         with self.assertRaises(ValueError) as ctx:
             profile_to_config_params(vpn_profile=profile, **_COMMON_KWARGS)
         self.assertIn("Phase 1", str(ctx.exception))
 
     def test_missing_phase2_raises(self):
         profile = _make_profile()
-        profile.vpnprofilephase2policyassignment_set.order_by.return_value.first.return_value = None
+        profile.vpn_profile_phase2_policy_assignments.order_by.return_value.first.return_value = None
         with self.assertRaises(ValueError) as ctx:
             profile_to_config_params(vpn_profile=profile, **_COMMON_KWARGS)
         self.assertIn("Phase 2", str(ctx.exception))

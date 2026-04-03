@@ -17,7 +17,6 @@ def _ikev2_data(**overrides):
         "local_network": "192.168.1.0/24",
         "remote_network": "10.0.0.0/24",
         "crypto_acl_name": "VPN-ACL",
-        "wan_interface": "GigabitEthernet1",
         "crypto_map_name": "CRYPTO-MAP",
         "crypto_map_sequence": 10,
         "ike_dh_group": "19",
@@ -46,7 +45,6 @@ def _ikev1_data(**overrides):
         "local_network": "172.16.0.0/16",
         "remote_network": "10.10.0.0/24",
         "crypto_acl_name": "VPN-ACL-V1",
-        "wan_interface": "GigabitEthernet2",
         "crypto_map_name": "CMAP-V1",
         "crypto_map_sequence": 20,
         "ike_dh_group": "14",
@@ -169,9 +167,10 @@ class BuildIosxePolicyConfigIKEv2Test(TestCase):
     def test_crypto_map_match_address(self):
         self.assertIn(" match address VPN-ACL", self.commands)
 
-    def test_wan_interface_applied(self):
-        self.assertIn("interface GigabitEthernet1", self.commands)
-        self.assertIn(" crypto map CRYPTO-MAP", self.commands)
+    def test_no_interface_lines(self):
+        """Config should not contain interface/crypto-map-apply lines."""
+        interface_lines = [c for c in self.commands if c.strip().startswith("interface ")]
+        self.assertEqual(interface_lines, [])
 
     def test_psk_in_keyring(self):
         self.assertIn("  pre-shared-key local SuperSecret123!", self.commands)
@@ -226,9 +225,10 @@ class BuildIosxePolicyConfigIKEv1Test(TestCase):
     def test_crypto_map_entry(self):
         self.assertIn("crypto map CMAP-V1 20 ipsec-isakmp", self.commands)
 
-    def test_wan_interface_applied(self):
-        self.assertIn("interface GigabitEthernet2", self.commands)
-        self.assertIn(" crypto map CMAP-V1", self.commands)
+    def test_no_interface_lines(self):
+        """Config should not contain interface/crypto-map-apply lines."""
+        interface_lines = [c for c in self.commands if c.strip().startswith("interface ")]
+        self.assertEqual(interface_lines, [])
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +282,7 @@ class BuildIosxePolicyConfigOrderTest(TestCase):
         map_idx = next(i for i, c in enumerate(commands) if c.startswith("crypto map"))
         self.assertLess(ts_idx, map_idx)
 
-    def test_interface_is_last(self):
+    def test_crypto_map_match_is_last(self):
+        """Last command should be the crypto map match address line."""
         commands = build_iosxe_policy_config(_ikev2_data())
-        self.assertTrue(commands[-1].strip().startswith("crypto map"))
-        self.assertTrue(commands[-2].strip().startswith("interface"))
+        self.assertTrue(commands[-1].strip().startswith("match address"))
