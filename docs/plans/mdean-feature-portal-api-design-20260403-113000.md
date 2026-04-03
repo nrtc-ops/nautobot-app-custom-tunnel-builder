@@ -95,7 +95,8 @@ All object creation runs inside a single `transaction.atomic()` block. The `get_
      For each VPNProfilePhase2PolicyAssignment on the template,
        create a corresponding assignment on the new profile (same policy + weight).
      Copy secrets_group, keepalive, NAT settings from template.
-     Set custom fields: crypto_map_sequence, psk_retrieval_token, psk_retrieved, psk_encrypted
+     Set custom fields: crypto_map_sequence, psk_retrieval_token, psk_retrieved
+     Create 1Password item with PSK → create Nautobot Secret + SecretsGroup → assign to profile
 
 4. Create VPNTunnel under the VPN
      name: "vpn-tunnel-nrtc-ms-{member_name}-{location}-{seq}"
@@ -120,7 +121,7 @@ All object creation runs inside a single `transaction.atomic()` block. The `get_
      protected_prefixes.add(member_prefix)  — the network on the member's side
 ```
 
-### Custom Fields (5 total)
+### Custom Fields (4 total)
 
 | Key | Content Type | Type | Notes |
 |---|---|---|---|
@@ -128,9 +129,55 @@ All object creation runs inside a single `transaction.atomic()` block. The `get_
 | `custom_tunnel_builder_crypto_map_sequence` | vpn.vpnprofile | integer | Auto-incremented per device, starts at 2000, step 10 |
 | `custom_tunnel_builder_psk_retrieval_token` | vpn.vpnprofile | text | 48-byte urlsafe token, advanced_ui=True |
 | `custom_tunnel_builder_psk_retrieved` | vpn.vpnprofile | boolean | One-time retrieval flag, advanced_ui=True |
-| `custom_tunnel_builder_psk_encrypted` | vpn.vpnprofile | text | Temporary PSK storage, cleared after retrieval, advanced_ui=True |
 
-PSK fields use `advanced_ui=True` to hide from the primary detail tab. All fields grouped under "Custom Tunnel Builder" in the UI.
+PSK retrieval fields use `advanced_ui=True` to hide from the primary detail tab. All fields grouped under "Custom Tunnel Builder" in the UI.
+
+### PSK Storage (1Password via Nautobot Secrets)
+
+PSK is stored in 1Password (already configured as a Nautobot secrets backend), not in custom fields. This gives other teams direct 1Password access to member PSKs.
+
+**Write flow (at tunnel creation time):**
+1. Generate PSK (`secrets.token_urlsafe(32)`)
+2. Create item in 1Password via `onepassword-sdk` (v0.3.0) — service account token + vault UUID via env vars (`OP_SERVICE_ACCOUNT_TOKEN`, `OP_VAULT_UUID`). Name: matches tunnel naming convention.
+3. Create Nautobot `Secret` object referencing the 1Password item by vault/item identifiers
+4. Create Nautobot `SecretsGroup` containing that Secret
+5. Set `VPNProfile.secrets_group` = new SecretsGroup
+
+**Note:** The Nautobot secrets plugin is read-only. Writes go directly to 1Password via `onepassword-sdk==0.3.0` (added as dependency in `pyproject.toml`). Uses a service account token via env var.
+
+**1Password SDK usage pattern:**
+```python
+from onepassword import Client, ItemCreateParams, ItemField, ItemFieldType, ItemCategory
+
+op_client = await Client.authenticate(
+    auth=OP_SERVICE_ACCOUNT_TOKEN,
+    integration_name="nautobot-custom-tunnel-builder",
+    integration_version=__version__,
+)
+created_item = await op_client.items.create(ItemCreateParams(
+    vault_id=OP_VAULT_UUID,
+    category=ItemCategory.LOGIN,
+    title=f"vpn-psk-nrtc-ms-{member}-{location_slug}-{seq}",
+    fields=[
+        ItemField(
+            id="password", title="Pre-Shared Key",
+            value=psk, fieldType=ItemFieldType.CONCEALED,
+        ),
+    ],
+    notes=f"Auto-generated for {member_display} - {city}, {state}",
+))
+# created_item.id used to create Nautobot Secret referencing this 1Password item
+```
+SDK is async — use `asyncio.run()` to bridge from synchronous Nautobot code.
+
+**Read flow (portal PSK retrieval):**
+1. Check `psk_retrieved` CF on VPNProfile — if True, return 410 Gone
+2. Read PSK from `VPNProfile.secrets_group` → Secret → 1Password backend
+3. Set `psk_retrieved = True`
+4. Return PSK to portal
+
+**Read flow (other teams):**
+Access PSK directly in 1Password. No Nautobot interaction needed.
 
 ### Eliminated Custom Fields (3 removed entirely, now native)
 
@@ -222,7 +269,7 @@ File: `nautobot_custom_tunnel_builder/migrations/0001_create_custom_fields.py`
 
 The migration creates:
 
-1. **5 CustomField objects** via `get_or_create`, with M2M `content_types.add()` for each content type.
+1. **4 CustomField objects** via `get_or_create`, with M2M `content_types.add()` for each content type.
 2. **Manufacturer "Generic"** via `get_or_create` (may already exist in Nautobot, check first).
 3. **DeviceType "Member VPN Endpoint"** via `get_or_create`, manufacturer=Generic.
 
@@ -239,7 +286,7 @@ Dependencies: `("extras", "0001_initial")` for CustomField, `("dcim", "0001_init
 
 ## Success Criteria
 
-- 5 custom fields registered via idempotent data migration
+- 4 custom fields registered via idempotent data migration
 - Custom fields visible in Nautobot UI under "Custom Tunnel Builder" grouping
 - PSK fields hidden from primary detail tab (advanced_ui)
 - Portal API creates full VPN object hierarchy (VPN, VPNTunnel, VPNProfile, 2x VPNTunnelEndpoint, member Device)
