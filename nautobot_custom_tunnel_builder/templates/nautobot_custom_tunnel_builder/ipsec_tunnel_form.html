@@ -38,26 +38,43 @@
     <form method="post" novalidate>
       {% csrf_token %}
 
-      {# ---- Device ---------------------------------------------------- #}
+      {# ---- Member + Device ------------------------------------------- #}
       <div class="card mb-4">
         <div class="card-header bg-primary text-white">
           <h5 class="mb-0">
-            <span class="mdi mdi-router-network me-2"></span>Target Device
+            <span class="mdi mdi-account-network me-2"></span>Member &amp; Target Device
           </h5>
         </div>
         <div class="card-body">
-          <div class="mb-3">
-            <label for="{{ form.device.id_for_label }}" class="form-label fw-semibold">
-              {{ form.device.label }} <span class="text-danger">*</span>
-            </label>
-            {{ form.device }}
-            {% if form.device.help_text %}
-              <div class="form-text">{{ form.device.help_text }}</div>
-            {% endif %}
-            {% for error in form.device.errors %}
-              <div class="invalid-feedback d-block">{{ error }}</div>
-            {% endfor %}
-          </div>
+          <div class="row g-3">
+
+            <div class="col-md-6">
+              <label for="{{ form.member_name.id_for_label }}" class="form-label fw-semibold">
+                {{ form.member_name.label }} <span class="text-danger">*</span>
+              </label>
+              {{ form.member_name }}
+              {% if form.member_name.help_text %}
+                <div class="form-text">{{ form.member_name.help_text }}</div>
+              {% endif %}
+              {% for error in form.member_name.errors %}
+                <div class="invalid-feedback d-block">{{ error }}</div>
+              {% endfor %}
+            </div>
+
+            <div class="col-md-6">
+              <label for="{{ form.device.id_for_label }}" class="form-label fw-semibold">
+                {{ form.device.label }} <span class="text-danger">*</span>
+              </label>
+              {{ form.device }}
+              {% if form.device.help_text %}
+                <div class="form-text">{{ form.device.help_text }}</div>
+              {% endif %}
+              {% for error in form.device.errors %}
+                <div class="invalid-feedback d-block">{{ error }}</div>
+              {% endfor %}
+            </div>
+
+          </div>{# /row #}
         </div>
       </div>
 
@@ -163,19 +180,6 @@
         </div>
         <div class="card-body">
           <div class="row g-3">
-
-            <div class="col-md-5">
-              <label for="{{ form.wan_interface.id_for_label }}" class="form-label fw-semibold">
-                {{ form.wan_interface.label }} <span class="text-danger">*</span>
-              </label>
-              {{ form.wan_interface }}
-              {% if form.wan_interface.help_text %}
-                <div class="form-text">{{ form.wan_interface.help_text }}</div>
-              {% endif %}
-              {% for error in form.wan_interface.errors %}
-                <div class="invalid-feedback d-block">{{ error }}</div>
-              {% endfor %}
-            </div>
 
             <div class="col-md-4">
               <label for="{{ form.crypto_map_name.id_for_label }}" class="form-label fw-semibold">
@@ -520,7 +524,7 @@
         <ul class="small text-muted ps-3 mb-0">
           <li><code>ip access-list extended</code></li>
           <li><code>crypto ipsec transform-set</code></li>
-          <li><code>crypto map</code> (applied to WAN interface)</li>
+          <li><code>crypto map</code> entry</li>
           <li><code>copy running-config startup-config</code></li>
         </ul>
         <hr>
@@ -552,6 +556,48 @@
 
     versionSelect.addEventListener('change', applyVisibility);
     applyVisibility();
+  })();
+
+  /* ---- Auto-populate naming fields from member_name + sequence ------- */
+  (function () {
+    var memberInput = document.getElementById('id_member_name');
+    var seqInput    = document.getElementById('id_crypto_map_sequence');
+
+    var targets = {
+      'id_crypto_acl_name':          'VPN-ACL-',
+      'id_ipsec_transform_set_name': 'IPSEC-TS-',
+      'id_ikev2_proposal_name':      'IKEv2-PROP-',
+      'id_ikev2_policy_name':        'IKEv2-POL-',
+      'id_ikev2_keyring_name':       'IKEv2-KR-',
+      'id_ikev2_profile_name':       'IKEv2-PROF-'
+    };
+
+    function updateNames() {
+      var member = (memberInput.value || '').trim();
+      var seq    = (seqInput.value || '').trim();
+
+      if (!member) {
+        for (var id in targets) {
+          var el = document.getElementById(id);
+          if (el) el.value = '';
+        }
+        return;
+      }
+
+      var suffix = seq ? member + '-' + seq : member;
+      for (var id2 in targets) {
+        var el2 = document.getElementById(id2);
+        if (el2) el2.value = targets[id2] + suffix;
+      }
+    }
+
+    memberInput.addEventListener('input', updateNames);
+    seqInput.addEventListener('input', updateNames);
+    /* Also fire on blur for paste/autofill */
+    memberInput.addEventListener('blur', updateNames);
+    seqInput.addEventListener('blur', updateNames);
+    /* Initialize on page load (for form re-renders with errors) */
+    updateNames();
   })();
 </script>
 {% endblock %}

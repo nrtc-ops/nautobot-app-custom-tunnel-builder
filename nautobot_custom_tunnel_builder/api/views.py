@@ -339,7 +339,7 @@ class PortalTunnelRequestView(APIView):
                 if t.vpn_profile
             ]
             max_seq = max(sequences) if sequences else None
-            next_seq = (max_seq + 10) if max_seq else 2000
+            next_seq = (max_seq + 10) if max_seq else 3000
 
             # 5. Generate PSK and retrieval token
             psk = secrets.token_urlsafe(32)

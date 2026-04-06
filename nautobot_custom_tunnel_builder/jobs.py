@@ -662,7 +662,7 @@ class PortalBuildIpsecTunnel(Job):
         )
 
         # 2. Map VPN profile to config params
-        params = profile_to_config_params(
+        params = profile_to_config_params(  # pylint: disable=duplicate-code
             vpn_profile=vpn_profile,
             remote_peer_ip=remote_peer_ip,
             local_network_cidr=local_network_cidr,

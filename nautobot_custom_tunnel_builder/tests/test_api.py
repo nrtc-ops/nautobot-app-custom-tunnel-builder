@@ -339,19 +339,19 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
         # Verify VPNTunnel created
         tunnel = VPNTunnel.objects.get(pk=data["tunnel_id"])
         self.assertEqual(tunnel.vpn, vpn)
-        self.assertIn("Acme Corp - Jackson, MS - 2000", tunnel.name)
+        self.assertIn("Acme Corp - Jackson, MS - 3000", tunnel.name)
 
         # Verify VPNProfile cloned (not the template)
         profile = tunnel.vpn_profile
         self.assertNotEqual(profile.pk, self.template_profile.pk)
-        self.assertIn("vpnprofile-nrtc-ms-acme-corp-jackson-ms-2000", profile.name)
+        self.assertIn("vpnprofile-nrtc-ms-acme-corp-jackson-ms-3000", profile.name)
         # Verify Phase1/Phase2 policies were copied
         self.assertEqual(profile.vpn_profile_phase1_policy_assignments.count(), 1)
         self.assertEqual(profile.vpn_profile_phase2_policy_assignments.count(), 1)
         # Verify custom fields on profile
         self.assertEqual(
             profile._custom_field_data["custom_tunnel_builder_crypto_map_sequence"],  # pylint: disable=protected-access
-            2000,
+            3000,
         )
         self.assertFalse(
             profile._custom_field_data["custom_tunnel_builder_psk_retrieved"],  # pylint: disable=protected-access
@@ -414,8 +414,8 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
         self.assertIn("tunnel_id", resp2.json())
 
     @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
-    def test_crypto_map_sequence_starts_at_2000(self, _mock_op):
-        """First tunnel gets sequence 2000."""
+    def test_crypto_map_sequence_starts_at_3000(self, _mock_op):
+        """First tunnel gets sequence 3000."""
         payload = _valid_payload(self.device, self.template_profile)
         response = self._post(PORTAL_REQUEST_URL, payload)
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
@@ -423,11 +423,11 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
         tunnel = VPNTunnel.objects.get(pk=response.json()["tunnel_id"])
         profile = tunnel.vpn_profile
         seq = profile._custom_field_data["custom_tunnel_builder_crypto_map_sequence"]  # pylint: disable=protected-access
-        self.assertEqual(seq, 2000)
+        self.assertEqual(seq, 3000)
 
     @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
     def test_crypto_map_sequence_increments(self, _mock_op):
-        """Second tunnel on same device gets sequence 2010."""
+        """Second tunnel on same device gets sequence 3010."""
         payload = _valid_payload(self.device, self.template_profile)
         self._post(PORTAL_REQUEST_URL, payload)
 
@@ -437,7 +437,7 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
 
         tunnel2 = VPNTunnel.objects.get(pk=resp2.json()["tunnel_id"])
         seq = tunnel2.vpn_profile._custom_field_data["custom_tunnel_builder_crypto_map_sequence"]  # pylint: disable=protected-access
-        self.assertEqual(seq, 2010)
+        self.assertEqual(seq, 3010)
 
     @patch(OP_MOCK_PATH, side_effect=RuntimeError("1Password credentials not configured"))
     def test_1password_failure_rolls_back(self, _mock_op):
@@ -515,3 +515,207 @@ class PSKRetrievalTest(APITestCase):  # pylint: disable=too-many-ancestors
         )
         response = self._get(PSK_URL_TEMPLATE.format("test-token-already-used"))
         self.assertEqual(response.status_code, status.HTTP_410_GONE)
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: API request → object creation → config generation
+# ---------------------------------------------------------------------------
+
+
+class EndToEndConfigGenerationTest(APITestCase):  # pylint: disable=too-many-ancestors
+    """Test the full flow from API request through VPN object creation to IOS-XE config generation.
+
+    Mocks: 1Password SDK, SSH push (Netmiko).
+    Real: All Nautobot objects, profile cloning, config generation.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.device = _create_test_device()
+        cls.template_profile = _create_template_vpn_profile()
+        manufacturer, _ = Manufacturer.objects.get_or_create(name="Generic")
+        DeviceType.objects.get_or_create(model="Member VPN Endpoint", manufacturer=manufacturer)
+        LocationType.objects.get_or_create(name="Site")
+
+    def _post(self, url, data=None):
+        return self.client.post(url, data=data or {}, format="json", **self.header)
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
+    def test_api_to_config_generation_ikev2(self, _mock_op):  # pylint: disable=too-many-locals,too-many-statements
+        """Full flow: POST creates objects, job reads them, config generation produces valid IOS-XE."""
+        payload = _valid_payload(self.device, self.template_profile)
+        payload["member_name"] = "e2e-test-alpha"
+        payload["member_display_name"] = "E2E Test Alpha"
+        response = self._post(PORTAL_REQUEST_URL, payload)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+
+        tunnel_id = response.json()["tunnel_id"]
+        tunnel = VPNTunnel.objects.get(pk=tunnel_id)
+
+        # -- Extract parameters exactly as the job does --
+        hub_endpoint = tunnel.endpoint_a
+        spoke_endpoint = tunnel.endpoint_z
+        self.assertIsNotNone(hub_endpoint)
+        self.assertIsNotNone(spoke_endpoint)
+        self.assertIsNotNone(hub_endpoint.source_ipaddress)
+        self.assertIsNotNone(spoke_endpoint.source_ipaddress)
+
+        remote_peer_ip = str(spoke_endpoint.source_ipaddress.address.ip)
+        self.assertEqual(remote_peer_ip, "203.0.113.50")
+
+        hub_prefix = hub_endpoint.protected_prefixes.first()
+        spoke_prefix = spoke_endpoint.protected_prefixes.first()
+        self.assertIsNotNone(hub_prefix)
+        self.assertIsNotNone(spoke_prefix)
+
+        local_network_cidr = str(hub_prefix.prefix)
+        protected_network_cidr = str(spoke_prefix.prefix)
+        self.assertEqual(local_network_cidr, "10.100.0.0/24")
+        self.assertEqual(protected_network_cidr, "192.168.1.0/24")
+
+        vpn_profile = tunnel.vpn_profile
+        self.assertIsNotNone(vpn_profile)
+
+        profile_cf = vpn_profile._custom_field_data  # pylint: disable=protected-access
+        sequence = profile_cf.get("custom_tunnel_builder_crypto_map_sequence")
+        self.assertEqual(sequence, 3000)
+
+        crypto_map_name = (
+            hub_endpoint._custom_field_data.get(  # pylint: disable=protected-access
+                "custom_tunnel_builder_crypto_map_name", "VPN"
+            )
+            or "VPN"
+        )
+        self.assertEqual(crypto_map_name, "VPN")
+
+        # -- Run config generation (same calls as the job) --
+        from nautobot_custom_tunnel_builder.jobs import (  # pylint: disable=import-outside-toplevel
+            build_iosxe_policy_config,
+        )
+        from nautobot_custom_tunnel_builder.mapping import (  # pylint: disable=import-outside-toplevel
+            profile_to_config_params,
+        )
+
+        params = profile_to_config_params(  # pylint: disable=duplicate-code
+            vpn_profile=vpn_profile,
+            remote_peer_ip=remote_peer_ip,
+            local_network_cidr=local_network_cidr,
+            protected_network_cidr=protected_network_cidr,
+            crypto_map_name=crypto_map_name,
+            sequence=sequence,
+        )
+        params["pre_shared_key"] = "TestPSK123!"
+        commands = build_iosxe_policy_config(params)
+
+        # -- Verify IOS-XE config correctness --
+        self.assertGreater(len(commands), 10, "Expected at least 10 config lines")
+
+        # IKEv2 proposal (template uses IKEv2 + AES-256-CBC + SHA256 + DH19)
+        # mapping.py generates names with PORTAL- prefix + sequence
+        self.assertIn("crypto ikev2 proposal PORTAL-PROP-3000", commands)
+        self.assertIn(" encryption aes-cbc-256", commands)
+        self.assertIn(" integrity sha256", commands)
+        self.assertIn(" group 19", commands)
+
+        # IKEv2 policy
+        self.assertIn("crypto ikev2 policy PORTAL-POL-3000", commands)
+
+        # IKEv2 keyring with PSK
+        self.assertIn("crypto ikev2 keyring PORTAL-KR-3000", commands)
+        self.assertIn("  pre-shared-key local TestPSK123!", commands)
+        self.assertIn("  pre-shared-key remote TestPSK123!", commands)
+
+        # IKEv2 profile
+        self.assertIn("crypto ikev2 profile PORTAL-PROF-3000", commands)
+
+        # Crypto ACL with correct networks
+        self.assertIn("ip access-list extended PORTAL-ACL-3000", commands)
+        self.assertIn(" permit ip 10.100.0.0 0.0.0.255 192.168.1.0 0.0.0.255", commands)
+
+        # Transform set (AES-256 + SHA256)
+        self.assertIn("crypto ipsec transform-set PORTAL-TS-3000 esp-aes 256 esp-sha256-hmac", commands)
+        self.assertIn(" mode tunnel", commands)
+
+        # Crypto map entry with correct map name and sequence
+        self.assertIn("crypto map VPN 3000 ipsec-isakmp", commands)
+        self.assertIn(" set peer 203.0.113.50", commands)
+        self.assertIn(" set transform-set PORTAL-TS-3000", commands)
+        self.assertIn(" set security-association lifetime seconds 3600", commands)
+        self.assertIn(" set ikev2-profile PORTAL-PROF-3000", commands)
+        self.assertIn(" match address PORTAL-ACL-3000", commands)
+
+        # No interface/crypto-map-apply lines
+        interface_lines = [c for c in commands if c.strip().startswith("interface ")]
+        self.assertEqual(interface_lines, [], "Config should not contain interface apply lines")
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
+    def test_second_tunnel_increments_sequence_in_config(self, _mock_op):
+        """Second tunnel on same device uses sequence 3010 in all config objects."""
+        payload = _valid_payload(self.device, self.template_profile)
+        payload["member_name"] = "e2e-seq-first"
+        payload["member_display_name"] = "E2E Seq First"
+        self._post(PORTAL_REQUEST_URL, payload)
+
+        # Second tunnel with different remote IP
+        payload2 = _valid_payload(self.device, self.template_profile)
+        payload2["remote_peer_ip"] = "203.0.113.51"
+        payload2["member_name"] = "e2e-seq-second"
+        payload2["member_display_name"] = "E2E Seq Second"
+        resp2 = self._post(PORTAL_REQUEST_URL, payload2)
+        self.assertEqual(resp2.status_code, status.HTTP_202_ACCEPTED)
+
+        tunnel2 = VPNTunnel.objects.get(pk=resp2.json()["tunnel_id"])
+        profile2 = tunnel2.vpn_profile
+        seq2 = profile2._custom_field_data["custom_tunnel_builder_crypto_map_sequence"]  # pylint: disable=protected-access
+        self.assertEqual(seq2, 3010)
+
+        from nautobot_custom_tunnel_builder.jobs import (  # pylint: disable=import-outside-toplevel
+            build_iosxe_policy_config,
+        )
+        from nautobot_custom_tunnel_builder.mapping import (  # pylint: disable=import-outside-toplevel
+            profile_to_config_params,
+        )
+
+        hub2 = tunnel2.endpoint_a
+        params = profile_to_config_params(
+            vpn_profile=profile2,
+            remote_peer_ip="203.0.113.51",
+            local_network_cidr=str(hub2.protected_prefixes.first().prefix),
+            protected_network_cidr=str(tunnel2.endpoint_z.protected_prefixes.first().prefix),
+            crypto_map_name=hub2._custom_field_data.get(  # pylint: disable=protected-access
+                "custom_tunnel_builder_crypto_map_name", "VPN"
+            ),
+            sequence=seq2,
+        )
+        params["pre_shared_key"] = "TestPSK456!"
+        commands = build_iosxe_policy_config(params)
+
+        # All naming uses sequence 3010
+        self.assertIn("crypto ikev2 proposal PORTAL-PROP-3010", commands)
+        self.assertIn("crypto map VPN 3010 ipsec-isakmp", commands)
+        self.assertIn(" set peer 203.0.113.51", commands)
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
+    def test_device_resolution_from_hub_endpoint(self, _mock_op):
+        """The job can resolve the concentrator Device from the hub endpoint's IP."""
+        payload = _valid_payload(self.device, self.template_profile)
+        payload["member_name"] = "e2e-dev-resolve"
+        payload["member_display_name"] = "E2E Dev Resolve"
+        response = self._post(PORTAL_REQUEST_URL, payload)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+
+        tunnel = VPNTunnel.objects.get(pk=response.json()["tunnel_id"])
+        hub = tunnel.endpoint_a
+
+        # Traverse the same path the job uses: source_ipaddress → interface → device
+        ip_addr = hub.source_ipaddress
+        self.assertIsNotNone(ip_addr)
+
+        # In Nautobot 3.x, get the device through IPAddressToInterface
+        from nautobot.ipam.models import IPAddressToInterface  # pylint: disable=import-outside-toplevel
+
+        assignment = IPAddressToInterface.objects.filter(ip_address=ip_addr).first()
+        self.assertIsNotNone(assignment, "Hub IP must be assigned to an interface")
+        resolved_device = assignment.interface.device
+        self.assertEqual(resolved_device.pk, self.device.pk)
+        self.assertEqual(resolved_device.name, "csr-vpn-router")

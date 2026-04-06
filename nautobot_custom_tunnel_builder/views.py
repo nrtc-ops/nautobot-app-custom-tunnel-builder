@@ -13,6 +13,35 @@ from .forms import IpsecTunnelForm
 
 logger = logging.getLogger(__name__)
 
+# Form sequence range: 2000-2999
+_FORM_SEQ_MIN = 2000
+_FORM_SEQ_MAX = 2999
+_FORM_SEQ_STEP = 5
+
+
+def _next_form_sequence():
+    """Compute the next available crypto map sequence in the form range (2000-2999).
+
+    Scans VPNProfiles for existing sequences in range, returns highest + 5.
+    Falls back to 2000 if none exist.
+    """
+    try:
+        from nautobot.vpn.models import VPNProfile  # pylint: disable=import-outside-toplevel
+
+        profiles = VPNProfile.objects.all()
+        sequences = [
+            p._custom_field_data.get("custom_tunnel_builder_crypto_map_sequence", 0)  # pylint: disable=protected-access
+            for p in profiles
+        ]
+        form_sequences = [s for s in sequences if isinstance(s, int) and _FORM_SEQ_MIN <= s <= _FORM_SEQ_MAX]
+        if form_sequences:
+            next_seq = max(form_sequences) + _FORM_SEQ_STEP
+            return min(next_seq, _FORM_SEQ_MAX)
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
+    return _FORM_SEQ_MIN
+
+
 # Full dotted class-path Nautobot uses to look up the registered job.
 JOB_CLASS_PATH = "nautobot_custom_tunnel_builder.jobs.BuildIpsecTunnel"
 
@@ -28,8 +57,9 @@ class IpsecTunnelBuilderView(LoginRequiredMixin, PermissionRequiredMixin, View):
     # ------------------------------------------------------------------
 
     def get(self, request):
-        """Render the IPsec Tunnel Builder form."""
-        form = IpsecTunnelForm()
+        """Render the IPsec Tunnel Builder form with auto-computed sequence."""
+        next_seq = _next_form_sequence()
+        form = IpsecTunnelForm(initial={"crypto_map_sequence": next_seq})
         return render(request, self.template_name, self._ctx(form))
 
     # ------------------------------------------------------------------
