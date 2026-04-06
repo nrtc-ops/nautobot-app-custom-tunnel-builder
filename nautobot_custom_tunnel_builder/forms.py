@@ -3,7 +3,6 @@
 import ipaddress
 
 from django import forms
-from nautobot.dcim.models import Device
 
 from .constants import (
     IKE_DH_GROUP_CHOICES,
@@ -14,6 +13,7 @@ from .constants import (
     IKEV2_INTEGRITY_CHOICES,
     IPSEC_ENCRYPTION_CHOICES,
     IPSEC_INTEGRITY_CHOICES,
+    get_iosxe_device_queryset,
 )
 
 # ---------------------------------------------------------------------------
@@ -31,7 +31,7 @@ class IpsecTunnelForm(forms.Form):
     # Device                                                               #
     # ------------------------------------------------------------------ #
     device = forms.ModelChoiceField(
-        queryset=Device.objects.filter(platform__network_driver="cisco_xe").order_by("name"),
+        queryset=get_iosxe_device_queryset(),
         label="Target Device",
         help_text="Select the IOS-XE device to configure. Only devices with the 'cisco_ios' platform driver are listed.",
         widget=forms.Select(attrs={"class": "form-select"}),
@@ -86,14 +86,6 @@ class IpsecTunnelForm(forms.Form):
     # ------------------------------------------------------------------ #
     # Crypto map                                                           #
     # ------------------------------------------------------------------ #
-    wan_interface = forms.CharField(
-        label="WAN Interface",
-        max_length=64,
-        initial="GigabitEthernet1",
-        help_text="Physical interface where the crypto map will be applied.",
-        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "GigabitEthernet1"}),
-    )
-
     crypto_map_name = forms.CharField(
         label="Crypto Map Name",
         max_length=64,

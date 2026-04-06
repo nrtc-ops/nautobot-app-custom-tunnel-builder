@@ -96,12 +96,12 @@ Keep this plugin for internal ops. Create `nautobot-vpn-portal-api` for the port
 
 The custom endpoint gives a clean contract between the portal and Nautobot. It handles PSK lifecycle properly, provides a portal-friendly response format, and keeps everything in one codebase. The plugin already owns the config generation, SSH push, and internal form. Adding an API surface is a natural extension, not scope creep.
 
-### Key components to build:
+### Key Components to Build
 
 1. **`api/` module** — Django REST Framework viewset + serializer
-   - `PortalTunnelRequestSerializer`: validates simplified inputs (vpn_profile, remote_peer_ip, device, protected_network_cidr)
-   - `PortalTunnelRequestView`: POST endpoint, creates VPN objects, triggers config push, returns response with PSK retrieval URL
-   - URL: `/api/plugins/tunnel-builder/portal-request/`
+    - `PortalTunnelRequestSerializer`: validates simplified inputs (vpn_profile, remote_peer_ip, device, protected_network_cidr)
+    - `PortalTunnelRequestView`: POST endpoint, creates VPN objects, triggers config push, returns response with PSK retrieval URL
+    - URL: `/api/plugins/tunnel-builder/portal-request/`
 
 2. **`profile_to_config_params()` mapping function**
 
@@ -136,16 +136,16 @@ The custom endpoint gives a clean contract between the portal and Nautobot. It h
    The naming/sequencing params (crypto_map_name, ACL name, transform-set name, IKEv2 names) have no VPNProfile source. They are operational/device-specific. The mapping function auto-generates them using a per-device sequence counter tracked via VPNTunnel objects in Nautobot.
 
 3. **PSK lifecycle**
-   - Prototype: `secrets.token_urlsafe(32)`, returned in response body
-   - Production: generate PSK, store in Nautobot Secrets, return one-time retrieval endpoint (`GET /api/plugins/tunnel-builder/psk/<token>/`) with 15-minute TTL, single-use
+    - Prototype: `secrets.token_urlsafe(32)`, returned in response body
+    - Production: generate PSK, store in Nautobot Secrets, return one-time retrieval endpoint (`GET /api/plugins/tunnel-builder/psk/<token>/`) with 15-minute TTL, single-use
 
-   **PSK retrieval endpoint spec (production):**
-   - Token: `secrets.token_urlsafe(48)` (384 bits of entropy)
-   - Storage: Django cache backend (Redis/memcached), key = token, value = encrypted PSK, TTL = 900s (15 min)
-   - Auth: token-in-URL is sole auth (bearer token in URL path). Rate limit: 10 requests/min per IP.
-   - Success: `200 OK` with `{"psk": "..."}`. Token deleted from cache after retrieval (single-use).
-   - Expired/used: `410 Gone` with `{"error": "PSK retrieval link has expired or was already used"}`
-   - Invalid token: `404 Not Found`
+    **PSK retrieval endpoint spec (production):**
+    - Token: `secrets.token_urlsafe(48)` (384 bits of entropy)
+    - Storage: Django cache backend (Redis/memcached), key = token, value = encrypted PSK, TTL = 900s (15 min)
+    - Auth: token-in-URL is sole auth (bearer token in URL path). Rate limit: 10 requests/min per IP.
+    - Success: `200 OK` with `{"psk": "..."}`. Token deleted from cache after retrieval (single-use).
+    - Expired/used: `410 Gone` with `{"error": "PSK retrieval link has expired or was already used"}`
+    - Invalid token: `404 Not Found`
 
 4. **VPN model object creation** — creates `VPNTunnel` + `VPNTunnelEndpoint` objects. Tunnel status tracks provisioning state (`"active"` on success, `"failed"` on error).
 
@@ -158,6 +158,7 @@ The custom endpoint gives a clean contract between the portal and Nautobot. It h
 ### Crypto map sequence collision strategy
 
 When multiple tunnels exist on the same device, sequence numbers must not collide. Strategy:
+
 - Query existing `VPNTunnel` objects for the target device
 - Extract the highest crypto map sequence in use
 - New tunnel gets `max(existing_sequences) + 10` (or 10 if no existing tunnels)
@@ -185,7 +186,7 @@ If the SSH connection takes longer than 45 seconds, the endpoint returns `504 Ga
 | SSH timeout | `504 Gateway Timeout` | `{"error": "Device connection timed out"}` |
 | Duplicate tunnel (same device + peer) | `409 Conflict` | `{"error": "Tunnel already exists", "tunnel_id": "..."}` |
 
-### What NOT to build (yet):
+### What NOT to Build (Yet)
 
 - Rollback on partial failure (config pushed but VPN objects failed, or vice versa)
 - Tunnel teardown / lifecycle management

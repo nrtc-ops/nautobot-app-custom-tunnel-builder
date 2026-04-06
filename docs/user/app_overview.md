@@ -10,7 +10,7 @@ Operators fill in the form, click **Build Tunnel**, and a Nautobot Job connects 
 
 ## Architecture
 
-```
+```text
 Browser
   |
   v

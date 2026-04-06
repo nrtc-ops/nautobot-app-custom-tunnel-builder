@@ -2,7 +2,7 @@
 
 ## Project Structure
 
-```
+```text
 nautobot-app-custom-tunnel-builder/
 ├── pyproject.toml                              # Package metadata and build config (Poetry)
 ├── poetry.lock                                 # Locked dependencies

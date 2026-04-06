@@ -55,3 +55,65 @@ IPSEC_INTEGRITY_CHOICES = (
     ("esp-sha512-hmac", "ESP-SHA512-HMAC"),
     ("", "None (use with GCM encryption)"),
 )
+
+# ---------------------------------------------------------------------------
+# Nautobot VPN model value → IOS-XE CLI token translation maps
+# ---------------------------------------------------------------------------
+
+NAUTOBOT_TO_IOSXE_PHASE1_ENCRYPTION = {
+    "AES-256-CBC": "aes-cbc-256",
+    "AES-128-CBC": "aes-cbc-128",
+    "AES-256-GCM": "aes-gcm-256",
+    "AES-128-GCM": "aes-gcm-128",
+}
+
+NAUTOBOT_TO_IOSXE_PHASE1_INTEGRITY = {
+    "SHA256": "sha256",
+    "SHA384": "sha384",
+    "SHA512": "sha512",
+    "SHA1": "sha",
+    "MD5": "md5",
+}
+
+NAUTOBOT_TO_IOSXE_PHASE2_ENCRYPTION = {
+    "AES-256-CBC": "esp-aes 256",
+    "AES-128-CBC": "esp-aes 128",
+    "AES-256-GCM": "esp-gcm 256",
+    "AES-128-GCM": "esp-gcm 128",
+}
+
+NAUTOBOT_TO_IOSXE_PHASE2_INTEGRITY = {
+    "SHA256": "esp-sha256-hmac",
+    "SHA384": "esp-sha384-hmac",
+    "SHA512": "esp-sha512-hmac",
+}
+
+NAUTOBOT_TO_IOSXE_IKE_VERSION = {
+    "IKEv2": "ikev2",
+    "IKEv1": "ikev1",
+}
+
+NAUTOBOT_TO_IOSXE_IKEV1_ENCRYPTION = {
+    "AES-256-CBC": "aes 256",
+    "AES-128-CBC": "aes",
+    "AES-192-CBC": "aes 192",
+    "3DES": "3des",
+}
+
+NAUTOBOT_TO_IOSXE_IKEV1_HASH = {
+    "SHA256": "sha256",
+    "SHA384": "sha384",
+    "SHA512": "sha512",
+    "SHA1": "sha",
+    "MD5": "md5",
+}
+
+
+def get_iosxe_device_queryset():
+    """Return a Device queryset filtered to Cisco IOS-XE platforms.
+
+    Shared between the internal form and the portal API serializer.
+    """
+    from nautobot.dcim.models import Device  # noqa: E402  # pylint: disable=import-outside-toplevel
+
+    return Device.objects.filter(platform__network_driver__in=["cisco_ios", "cisco_xe"]).order_by("name")

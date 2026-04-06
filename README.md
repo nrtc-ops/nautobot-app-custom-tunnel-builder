@@ -5,12 +5,12 @@
 An app for [Nautobot](https://github.com/nautobot/nautobot) that provides a ui/form for inputting tunnel configuration then builds device configurations and automated jobs to push to devices.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/nrtc-ops/nautobot-app-custom-tunnel-builder/main/docs/images/icon-nautobot-custom-tunnel-builder.png" class="logo" height="200px">
+  <img src="https://raw.githubusercontent.com/nrtc-ops/nautobot-app-custom-tunnel-builder/main/docs/images/icon-nautobot-custom-tunnel-builder.png" alt="Custom Tunnel Builder Logo" class="logo" height="200px">
   <br>
-  <a href="https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder/actions"><img src="https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder/actions/workflows/ci.yml/badge.svg?branch=main"></a>
-  <a href="https://pypi.org/project/nautobot-custom-tunnel-builder/"><img src="https://img.shields.io/pypi/v/nautobot-custom-tunnel-builder"></a>
-  <a href="https://pypi.org/project/nautobot-custom-tunnel-builder/"><img src="https://img.shields.io/badge/status-alpha-orange"></a>
-  <a href="https://pypi.org/project/nautobot-custom-tunnel-builder/"><img src="https://img.shields.io/pypi/dm/nautobot-custom-tunnel-builder"></a>
+  <a href="https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder/actions"><img src="https://github.com/nrtc-ops/nautobot-app-custom-tunnel-builder/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI Status"></a>
+  <a href="https://pypi.org/project/nautobot-custom-tunnel-builder/"><img src="https://img.shields.io/pypi/v/nautobot-custom-tunnel-builder" alt="PyPI Version"></a>
+  <a href="https://pypi.org/project/nautobot-custom-tunnel-builder/"><img src="https://img.shields.io/badge/status-alpha-orange" alt="Status: Alpha"></a>
+  <a href="https://pypi.org/project/nautobot-custom-tunnel-builder/"><img src="https://img.shields.io/pypi/dm/nautobot-custom-tunnel-builder" alt="PyPI Downloads"></a>
   <br>
   An <a href="https://networktocode.com/nautobot-apps/">App</a> for <a href="https://nautobot.com/">Nautobot</a>.
 </p>
@@ -54,5 +54,4 @@ If you need to view the fully-generated documentation site, you can build it wit
 
 ## Questions
 
-For any questions or comments, please check the [FAQ](https://docs.nautobot.com/projects/custom-tunnel-builder/en/latest/user/faq/) first. Feel free to also swing by the [Network to Code Slack](https://networktocode.slack.com/) (channel `#nautobot`), sign up [here](http://slack.networktocode.com/) if you don't have an account.
-
+For any questions or comments, please check the [FAQ](https://docs.nautobot.com/projects/custom-tunnel-builder/en/latest/user/faq/) first. Feel free to also swing by the [Network to Code Slack](https://networktocode.slack.com/) (channel `#nautobot`), sign up [on the NTC Slack site](http://slack.networktocode.com/) if you don't have an account.

@@ -3,10 +3,13 @@
 import ipaddress
 import logging
 import os
+import re
 import traceback
 
 from nautobot.apps.jobs import ChoiceVar, IntegerVar, Job, ObjectVar, StringVar, register_jobs
 from nautobot.dcim.models import Device
+from nautobot.extras.models import Status
+from nautobot.vpn.models import VPNTunnel
 from netmiko import ConnectHandler
 
 from .constants import (
@@ -19,10 +22,60 @@ from .constants import (
     IPSEC_ENCRYPTION_CHOICES,
     IPSEC_INTEGRITY_CHOICES,
 )
+from .mapping import profile_to_config_params
 
 logger = logging.getLogger(__name__)
 
 name = "NRTC Tunnel Builders"  # pylint: disable=invalid-name
+
+# ---------------------------------------------------------------------------
+# IOS-XE error detection
+# ---------------------------------------------------------------------------
+
+_IOSXE_ERROR_PATTERN = re.compile(r"^%\s+.+", re.MULTILINE)
+
+
+class IosXeConfigError(Exception):
+    """Raised when IOS-XE returns error output during config push."""
+
+
+# ---------------------------------------------------------------------------
+# Shared SSH push function
+# ---------------------------------------------------------------------------
+
+
+def push_config_to_device(device_params: dict, commands: list[str], push_logger) -> str:
+    """Push configuration commands to a device via SSH and save config.
+
+    Args:
+        device_params: Netmiko connection parameters dict.
+        commands: List of IOS-XE configuration commands.
+        push_logger: Logger instance for status messages.
+
+    Returns:
+        Raw output from send_config_set.
+
+    Raises:
+        IosXeConfigError: If the device output contains error patterns.
+    """
+    with ConnectHandler(**device_params) as conn:
+        if device_params.get("secret"):
+            conn.enable()
+
+        push_logger.info("Connected. Pushing %d commands.", len(commands))
+        output = conn.send_config_set(commands, cmd_verify=False)
+        push_logger.info("Configuration output:\n%s", output)
+
+        errors = _IOSXE_ERROR_PATTERN.findall(output)
+        if errors:
+            error_msg = "; ".join(errors)
+            push_logger.error("IOS-XE errors detected: %s", error_msg)
+            raise IosXeConfigError(f"Device returned errors: {error_msg}")
+
+        conn.save_config()
+        push_logger.info("Running configuration saved to startup-config.")
+
+    return output
 
 
 # ---------------------------------------------------------------------------
@@ -137,10 +190,6 @@ def build_iosxe_policy_config(data: dict) -> list[str]:
         commands.append(f" set ikev2-profile {data['ikev2_profile_name']}")
     commands.append(f" match address {acl_name}")
 
-    # Apply crypto map to WAN interface
-    commands.append(f"interface {data['wan_interface']}")
-    commands.append(f" crypto map {map_name}")
-
     return commands
 
 
@@ -211,13 +260,6 @@ class BuildIpsecTunnel(Job):
     )
 
     # Crypto map
-    wan_interface = StringVar(
-        description="Physical interface where the crypto map is applied (e.g. GigabitEthernet1).",
-        label="WAN Interface",
-        default="GigabitEthernet1",
-        max_length=64,
-    )
-
     crypto_map_name = StringVar(
         label="Crypto Map Name",
         default="CRYPTO-MAP",
@@ -381,7 +423,6 @@ class BuildIpsecTunnel(Job):
         local_network,
         remote_network,
         crypto_acl_name,
-        wan_interface,
         crypto_map_name,
         crypto_map_sequence,
         ike_dh_group,
@@ -417,7 +458,6 @@ class BuildIpsecTunnel(Job):
             "local_network": local_network,
             "remote_network": remote_network,
             "crypto_acl_name": crypto_acl_name,
-            "wan_interface": wan_interface,
             "crypto_map_name": crypto_map_name,
             "crypto_map_sequence": crypto_map_sequence,
             "ike_dh_group": ike_dh_group,
@@ -478,17 +518,7 @@ class BuildIpsecTunnel(Job):
         }
 
         try:
-            with ConnectHandler(**device_params) as conn:
-                if device_params.get("secret"):
-                    conn.enable()
-
-                self.logger.info("Connected. Pushing %d commands.", len(commands))
-                output = conn.send_config_set(commands, cmd_verify=False)
-                self.logger.info("Configuration output:\n%s", output)
-
-                conn.save_config()
-                self.logger.info("Running configuration saved to startup-config.")
-
+            push_config_to_device(device_params, commands, self.logger)
         except Exception as exc:
             self.logger.error(
                 "Failed to configure %s: %s\n%s",
@@ -511,4 +541,195 @@ class BuildIpsecTunnel(Job):
         )
 
 
-register_jobs(BuildIpsecTunnel)
+class PortalBuildIpsecTunnel(Job):
+    """Build a portal-requested IPsec tunnel from VPNTunnel custom field data.
+
+    This job is enqueued by the portal API. It reads tunnel parameters from the
+    VPNTunnel's custom fields, maps the VPN profile to IOS-XE commands, pushes
+    the configuration, and updates the tunnel status.
+    """
+
+    class Meta:  # pylint: disable=too-few-public-methods
+        """Meta attributes for the Job."""
+
+        name = "Portal: Build Policy-Based IPsec Tunnel (IOS-XE)"
+        description = "API-triggered job that configures a policy-based IPsec tunnel from a VPNTunnel record."
+        hidden = True
+        has_sensitive_variables = True
+
+    tunnel_id = StringVar(
+        label="VPN Tunnel ID",
+        description="UUID of the VPNTunnel to configure.",
+        max_length=36,
+    )
+
+    pre_shared_key = StringVar(
+        label="Pre-Shared Key",
+        description="IKE pre-shared key (sensitive).",
+        max_length=128,
+    )
+
+    # ------------------------------------------------------------------ #
+    # Helpers                                                              #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _get_management_ip(device: Device) -> str:
+        """Return the device's primary IP as a plain string (no prefix length)."""
+        if not device.primary_ip:
+            raise ValueError(
+                f"Device '{device.name}' has no primary IP configured in Nautobot. "
+                "Set a primary IPv4 address before running this job."
+            )
+        return str(device.primary_ip.address.ip)
+
+    @staticmethod
+    def _get_netmiko_platform(device: Device) -> str:
+        """Map the Nautobot platform network driver to a Netmiko device_type."""
+        platform_map = {
+            "cisco_ios": "cisco_ios",
+            "cisco_xe": "cisco_xe",
+            "cisco_iosxe": "cisco_xe",
+        }
+        driver = ""
+        if device.platform:
+            driver = (device.platform.network_driver or "").lower()
+        return platform_map.get(driver, "cisco_ios")
+
+    # ------------------------------------------------------------------ #
+    # Main run method                                                      #
+    # ------------------------------------------------------------------ #
+
+    def run(self, tunnel_id, pre_shared_key):  # pylint: disable=arguments-differ,too-many-locals,too-many-statements
+        """Execute the portal-requested IPsec tunnel build."""
+        # 1. Load VPNTunnel and extract parameters from custom fields
+        try:
+            tunnel = VPNTunnel.objects.get(pk=tunnel_id)
+        except VPNTunnel.DoesNotExist:
+            self.logger.error("VPNTunnel with id '%s' not found.", tunnel_id)
+            raise
+
+        # Get hub and spoke endpoints
+        hub_endpoint = tunnel.endpoint_a
+        spoke_endpoint = tunnel.endpoint_z
+
+        if not hub_endpoint or not hub_endpoint.source_ipaddress:
+            self.logger.error("No hub endpoint with source IP found on tunnel '%s'.", tunnel.name)
+            raise ValueError(f"Tunnel '{tunnel.name}' has no hub endpoint with a source IP address.")
+        if not spoke_endpoint or not spoke_endpoint.source_ipaddress:
+            self.logger.error("No spoke endpoint with source IP found on tunnel '%s'.", tunnel.name)
+            raise ValueError(f"Tunnel '{tunnel.name}' has no spoke endpoint with a source IP address.")
+
+        # Resolve device from hub endpoint
+        device = hub_endpoint.source_ipaddress.assigned_object.parent
+        self.logger.info("Device resolved: %s", device.name)
+
+        # Read parameters from native objects
+        remote_peer_ip = str(spoke_endpoint.source_ipaddress.address.ip)
+
+        hub_prefix = hub_endpoint.protected_prefixes.first()
+        spoke_prefix = spoke_endpoint.protected_prefixes.first()
+        if not hub_prefix:
+            raise ValueError(f"Hub endpoint on tunnel '{tunnel.name}' has no protected prefix.")
+        if not spoke_prefix:
+            raise ValueError(f"Spoke endpoint on tunnel '{tunnel.name}' has no protected prefix.")
+
+        local_network_cidr = str(hub_prefix.prefix)
+        protected_network_cidr = str(spoke_prefix.prefix)
+
+        # Read custom fields from VPNProfile and hub endpoint
+        vpn_profile = tunnel.vpn_profile
+        if not vpn_profile:
+            self.logger.error("Tunnel '%s' has no VPN profile assigned.", tunnel.name)
+            raise ValueError(f"Tunnel '{tunnel.name}' has no VPN profile assigned.")
+
+        profile_cf = vpn_profile._custom_field_data  # pylint: disable=protected-access
+        sequence = profile_cf.get("custom_tunnel_builder_crypto_map_sequence")
+        crypto_map_name = (
+            hub_endpoint._custom_field_data.get(  # pylint: disable=protected-access
+                "custom_tunnel_builder_crypto_map_name", "VPN"
+            )
+            or "VPN"
+        )
+
+        self.logger.info(
+            "Tunnel '%s': seq=%s, peer=%s, local=%s, protected=%s",
+            tunnel.name,
+            sequence,
+            remote_peer_ip,
+            local_network_cidr,
+            protected_network_cidr,
+        )
+
+        # 2. Map VPN profile to config params
+        params = profile_to_config_params(
+            vpn_profile=vpn_profile,
+            remote_peer_ip=remote_peer_ip,
+            local_network_cidr=local_network_cidr,
+            protected_network_cidr=protected_network_cidr,
+            crypto_map_name=crypto_map_name,
+            sequence=sequence,
+        )
+        params["pre_shared_key"] = pre_shared_key
+
+        # 3. Build IOS-XE configuration commands
+        commands = build_iosxe_policy_config(params)
+
+        self.logger.info(
+            "Generated %d configuration lines for tunnel '%s'.",
+            len(commands),
+            tunnel.name,
+        )
+
+        # Log config with redacted PSK
+        redacted = [
+            line.replace(pre_shared_key, "***REDACTED***") if pre_shared_key in line else line for line in commands
+        ]
+        self.logger.debug("Configuration preview:\n%s", "\n".join(redacted))
+
+        # 4. Build device connection parameters and push config
+        mgmt_ip = self._get_management_ip(device)
+        device_type = self._get_netmiko_platform(device)
+
+        device_params = {
+            "device_type": device_type,
+            "host": mgmt_ip,
+            "username": os.environ.get("NAUTOBOT_DEVICE_USERNAME", "admin"),
+            "password": os.environ.get("NAUTOBOT_DEVICE_PASSWORD", ""),
+            "secret": os.environ.get("NAUTOBOT_DEVICE_ENABLE_SECRET", ""),
+            "port": int(os.environ.get("NAUTOBOT_DEVICE_SSH_PORT", 22)),
+            "timeout": 30,
+            "session_log": None,
+        }
+
+        try:
+            push_config_to_device(device_params, commands, self.logger)
+        except Exception as exc:
+            self.logger.error(
+                "Failed to configure %s for tunnel '%s': %s\n%s",
+                device.name,
+                tunnel.name,
+                exc,
+                traceback.format_exc(),
+            )
+            # Set tunnel status to Decommissioning (closest to "failed")
+            decommissioning = Status.objects.get_for_model(VPNTunnel).get(name="Decommissioning")
+            tunnel.status = decommissioning
+            tunnel.save()
+            raise
+
+        # 5. Update tunnel status to Active on success
+        active_status = Status.objects.get_for_model(VPNTunnel).get(name="Active")
+        tunnel.status = active_status
+        tunnel.save()
+
+        self.logger.info(
+            "Portal IPsec tunnel '%s' successfully configured on %s.",
+            tunnel.name,
+            device.name,
+        )
+
+        return f"Portal tunnel '{tunnel.name}' configured on {device.name} ({mgmt_ip})."
+
+
+register_jobs(BuildIpsecTunnel, PortalBuildIpsecTunnel)

@@ -10,4 +10,5 @@ rules:
     quote-type: "double"
 ignore: |
   .venv/
+  .trunk/
   compose.yaml

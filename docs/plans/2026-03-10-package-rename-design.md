@@ -36,25 +36,30 @@ Adopt Nautobot app naming conventions by removing `_app` / `-app` from the Pytho
 ### 2. Python Source Files
 
 **`__init__.py`** (4 changes):
+
 - `get_version("nautobot_app_custom_tunnel_builder")` → `get_version("nautobot-custom-tunnel-builder")` (use PyPI distribution name)
 - `class NautobotAppCustomTunnelBuilderConfig` → `NautobotCustomTunnelBuilderConfig`
 - `name = "nautobot_app_custom_tunnel_builder"` → `"nautobot_custom_tunnel_builder"`
 - `config = NautobotAppCustomTunnelBuilderConfig` → `NautobotCustomTunnelBuilderConfig`
 
 **`views.py`** (3 changes):
+
 - `JOB_CLASS_PATH` string → `"nautobot_custom_tunnel_builder.jobs.BuildIpsecTunnel"`
 - `template_name` → `"nautobot_custom_tunnel_builder/ipsec_tunnel_form.html"`
 - `module_name=` → `"nautobot_custom_tunnel_builder.jobs"`
 
 **`urls.py`** (1 change):
+
 - `app_name` → `"nautobot_custom_tunnel_builder"`
 
 **`navigation.py`** (2 changes):
+
 - Both `link=` strings → `"plugins:nautobot_custom_tunnel_builder:ipsec_tunnel_builder"`
 
 ### 3. Build Configuration
 
 **`pyproject.toml`** (3 changes):
+
 - `name = "nautobot-app-custom-tunnel-builder"` → `"nautobot-custom-tunnel-builder"`
 - `include = ["nautobot_app_custom_tunnel_builder*"]` → `["nautobot_custom_tunnel_builder*"]`
 - `"nautobot_app_custom_tunnel_builder" = [` → `"nautobot_custom_tunnel_builder" = [`
@@ -64,20 +69,24 @@ Adopt Nautobot app naming conventions by removing `_app` / `-app` from the Pytho
 ### 4. Documentation
 
 **`readme.md`**:
+
 - `PLUGINS = ["nautobot_app_custom_tunnel_builder"]` → `["nautobot_custom_tunnel_builder"]`
 - Directory tree references (underscore form)
 - pip install / PyPI references (dash form)
 - Note: GitHub URLs with the repo name (`nautobot-app-custom-tunnel-builder`) do NOT change
 
 **`docs/installation.md`**:
+
 - PLUGINS config examples (underscore form)
 - pip install / wheel filename references (dash form)
 - git clone URL does NOT change (repo name unchanged)
 
 **`docs/configuration.md`**:
+
 - `"nautobot_app_custom_tunnel_builder": {` → `"nautobot_custom_tunnel_builder": {`
 
 **`docs/development.md`**:
+
 - Directory tree listings
 - Import paths
 - PLUGINS config
@@ -85,11 +94,13 @@ Adopt Nautobot app naming conventions by removing `_app` / `-app` from the Pytho
 - Template path references
 
 **`docs/overview.md`**:
+
 - Dash-form name references in description text
 
 ### 5. Project Guidance
 
 **`CLAUDE.md`**:
+
 - Lint command: `flake8 nautobot_app_custom_tunnel_builder/` → `nautobot_custom_tunnel_builder/`
 - Format command: `black nautobot_app_custom_tunnel_builder/` → `nautobot_custom_tunnel_builder/`
 - Class name reference: `NautobotAppCustomTunnelBuilderConfig` → `NautobotCustomTunnelBuilderConfig`
