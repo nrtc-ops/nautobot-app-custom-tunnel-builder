@@ -14,10 +14,14 @@ Session flow that Netmiko expects:
   <cmds>   → router(config)#
   end      → router#
   write memory → Building configuration...[OK] → router#
+
+Interactive use:
+  ssh user@localhost -p 2222     # password: anything
+  Commands are echoed back (line-level echo) so the terminal feels real.
+  Type 'exit' at the privileged prompt to disconnect.
 """
 
 import socket
-import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -66,13 +70,14 @@ class _Session:
         self.state = "privileged"   # start privileged — no need to 'enable' in tests
         self.config_commands: list[str] = []
         self._buf = b""
+        self._should_close = False
 
     # ------------------------------------------------------------------ #
     # I/O helpers                                                          #
     # ------------------------------------------------------------------ #
 
     def _send(self, text: str) -> None:
-        self.channel.send(text.encode("utf-8"))
+        self.channel.sendall(text.encode("utf-8"))
 
     def _prompt(self) -> str:
         if self.state == "config":
@@ -84,20 +89,28 @@ class _Session:
     # ------------------------------------------------------------------ #
 
     def _handle_line(self, line: str) -> None:
-        """Process one complete input line and send the appropriate response."""
+        """Process one complete input line and send the appropriate response.
+
+        Each command is echoed back (line-level echo) before the device
+        response, which matches what a real Cisco device does and also
+        makes interactive terminal use feel natural.
+        """
         cmd = line.strip()
 
-        # Skip blank lines — just re-emit prompt
+        # Skip blank lines — just re-emit prompt (no echo for empty input)
         if not cmd:
             self._send(f"\r\n{self._prompt()}")
             return
+
+        # Line-level echo: send the command back so the terminal shows it
+        self._send(f"{cmd}\r\n")
 
         cmd_lower = cmd.lower()
 
         if self.state == "privileged":
             if cmd_lower == "enable":
                 # Already privileged; ask for password anyway so enable() doesn't hang
-                self._send("\r\nPassword: ")
+                self._send("Password: ")
                 return
             if cmd_lower in ("terminal length 0", "terminal width 511", "terminal width 0",
                               "terminal no monitor"):
@@ -118,8 +131,9 @@ class _Session:
                 return
             if cmd_lower in ("exit", "logout", "quit"):
                 self._send("\r\nGoodbye.\r\n")
+                self._should_close = True   # close channel after returning
                 return
-            # Unrecognised exec command — just echo the prompt
+            # Unrecognised exec command — echo the prompt
             self._send(f"\r\n{self._prompt()}")
             return
 
@@ -150,6 +164,7 @@ class _Session:
     def run(self) -> None:
         """Read from channel until closed, process line by line."""
         waiting_for_enable_secret = False
+        # Send initial prompt so Netmiko (and humans) know we're ready
         self._send(f"\r\n{self._prompt()}")
 
         try:
@@ -173,9 +188,11 @@ class _Session:
                                 if line.strip().lower() == "enable":
                                     waiting_for_enable_secret = True
                                 self._handle_line(line)
+                                if self._should_close:
+                                    return  # triggers finally → channel.close()
                             break
                     else:
-                        break  # no more complete lines
+                        break  # no more complete lines in buffer
 
         finally:
             self._flush_output()
@@ -227,6 +244,7 @@ def _accept_loop(sock: socket.socket, host_key: paramiko.RSAKey) -> None:
             print("Client never opened a channel.", flush=True)
             continue
 
+        print(f"Session started for {addr[0]}:{addr[1]}", flush=True)
         session = _Session(channel)
         t = threading.Thread(target=session.run, daemon=True)
         t.start()

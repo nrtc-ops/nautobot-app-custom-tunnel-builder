@@ -23,6 +23,9 @@ services:
     volumes:
       - "fake-cisco-output:/output"
     restart: unless-stopped
+    networks:
+      default:
+        ipv4_address: 172.18.0.100
 
   # Inject dev bypass into nautobot + worker so 1Password is not required.
   # Both services share the dev-psk volume so the PSK file written by the web
@@ -44,3 +47,13 @@ volumes:
     driver: local
   dev-psk:
     driver: local
+
+# Pin the subnet so fake-cisco always gets 172.18.0.100 (the "fake-cisco"
+# device's primary IP in Nautobot). Without this, Docker assigns IPs
+# dynamically and they shift on every restart.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: "172.18.0.0/16"
+          gateway: "172.18.0.1"
