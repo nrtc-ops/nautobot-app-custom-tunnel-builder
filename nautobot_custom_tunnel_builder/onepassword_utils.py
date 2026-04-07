@@ -9,6 +9,16 @@ logger = logging.getLogger(__name__)
 OP_SERVICE_ACCOUNT_TOKEN = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN", "")
 OP_VAULT_UUID = os.environ.get("OP_VAULT_UUID", "")
 
+# When OP_DEV_BYPASS=true the PSK is written to a local temp file instead of
+# 1Password.  The Nautobot Secret is created with the built-in "text-file"
+# provider so the job can retrieve the PSK without any external credentials.
+# Never enable this in production.
+_DEV_PSK_DIR = "/tmp/nautobot-dev-psk"  # noqa: S108
+
+
+def _dev_bypass_enabled():
+    return os.environ.get("OP_DEV_BYPASS", "").lower() in ("true", "1", "yes")
+
 
 def store_psk_in_1password(psk, member_name, location_slug, sequence):
     """Create a 1Password item containing the PSK for a member tunnel.
@@ -23,9 +33,12 @@ def store_psk_in_1password(psk, member_name, location_slug, sequence):
         The created 1Password item ID (str).
 
     Raises:
-        RuntimeError: If 1Password credentials are not configured.
+        RuntimeError: If 1Password credentials are not configured and dev bypass is off.
         Exception: If the 1Password SDK call fails.
     """
+    if _dev_bypass_enabled():
+        return _store_psk_dev_bypass(psk, member_name, location_slug, sequence)
+
     if not OP_SERVICE_ACCOUNT_TOKEN or not OP_VAULT_UUID:
         raise RuntimeError(
             "1Password credentials not configured. "
@@ -33,6 +46,27 @@ def store_psk_in_1password(psk, member_name, location_slug, sequence):
         )
 
     return asyncio.run(_create_op_item(psk, member_name, location_slug, sequence))
+
+
+def get_secret_provider_params(op_item_id):
+    """Return (provider, parameters) for the Nautobot Secret for this item.
+
+    In dev bypass mode this points to the local temp file instead of 1Password.
+    """
+    if _dev_bypass_enabled():
+        return "text-file", {"path": f"{_DEV_PSK_DIR}/{op_item_id}"}
+    return "one-password", {"item_id": op_item_id, "field": "password"}
+
+
+def _store_psk_dev_bypass(psk, member_name, location_slug, sequence):
+    """Dev bypass: write PSK to a temp file, return a stable item ID."""
+    os.makedirs(_DEV_PSK_DIR, exist_ok=True)
+    item_id = f"dev-{member_name}-{location_slug}-{sequence}"
+    path = os.path.join(_DEV_PSK_DIR, item_id)
+    with open(path, "w") as f:  # noqa: PTH123
+        f.write(psk)
+    logger.warning("DEV BYPASS: PSK written to %s — not stored in 1Password", path)
+    return item_id
 
 
 async def _create_op_item(psk, member_name, location_slug, sequence):

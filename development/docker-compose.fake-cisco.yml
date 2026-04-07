@@ -1,0 +1,46 @@
+---
+# Overlay: adds a fake Cisco IOS-XE SSH target for integration testing.
+#
+# Use via invoke:
+#   invoke build --fake-cisco   # build both nautobot and fake-cisco images
+#   invoke start --fake-cisco   # start full stack including fake-cisco
+#   invoke stop                 # stops everything (fake-cisco included)
+#
+# After starting:
+#   SSH target inside Docker network:  fake-cisco:22
+#   SSH target from your Mac:          localhost:2222
+#   Watch received commands:           docker logs -f fake-cisco
+#   Dump commands file:                docker exec fake-cisco cat /output/commands.txt
+
+services:
+  fake-cisco:
+    build:
+      context: "./fake-cisco"
+      dockerfile: "Dockerfile"
+    container_name: "fake-cisco"
+    ports:
+      - "2222:22"
+    volumes:
+      - "fake-cisco-output:/output"
+    restart: unless-stopped
+
+  # Inject dev bypass into nautobot + worker so 1Password is not required.
+  # Both services share the dev-psk volume so the PSK file written by the web
+  # container is readable by the worker container.
+  nautobot:
+    environment:
+      OP_DEV_BYPASS: "true"
+    volumes:
+      - "dev-psk:/tmp/nautobot-dev-psk"
+
+  worker:
+    environment:
+      OP_DEV_BYPASS: "true"
+    volumes:
+      - "dev-psk:/tmp/nautobot-dev-psk"
+
+volumes:
+  fake-cisco-output:
+    driver: local
+  dev-psk:
+    driver: local

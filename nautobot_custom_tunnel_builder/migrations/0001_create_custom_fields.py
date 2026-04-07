@@ -4,7 +4,7 @@ from django.db import migrations
 
 
 def create_custom_fields_and_device_type(apps, schema_editor):
-    """Create 4 CustomField objects and a 'Member VPN Endpoint' DeviceType."""
+    """Create 2 CustomField objects and a 'Member VPN Endpoint' DeviceType."""
     CustomField = apps.get_model("extras", "CustomField")
     ContentType = apps.get_model("contenttypes", "ContentType")
     Manufacturer = apps.get_model("dcim", "Manufacturer")
@@ -49,43 +49,13 @@ def create_custom_fields_and_device_type(apps, schema_editor):
         defaults={
             "label": "Crypto Map Sequence",
             "type": "integer",
-            "description": "Crypto map sequence number for this tunnel (starts at 2000, step 10).",
+            "description": "Crypto map sequence number for this tunnel (starts at 3000, step 10).",
             "grouping": "Custom Tunnel Builder",
             "weight": 200,
             "required": False,
         },
     )
     cf_crypto_map_seq.content_types.add(vpnprofile_ct)
-
-    # 3. psk_retrieval_token on VPNProfile
-    cf_psk_token, _ = CustomField.objects.get_or_create(
-        key="custom_tunnel_builder_psk_retrieval_token",
-        defaults={
-            "label": "PSK Retrieval Token",
-            "type": "text",
-            "description": "One-time token for portal PSK retrieval.",
-            "grouping": "Custom Tunnel Builder",
-            "weight": 300,
-            "required": False,
-            "advanced_ui": True,
-        },
-    )
-    cf_psk_token.content_types.add(vpnprofile_ct)
-
-    # 4. psk_retrieved on VPNProfile
-    cf_psk_retrieved, _ = CustomField.objects.get_or_create(
-        key="custom_tunnel_builder_psk_retrieved",
-        defaults={
-            "label": "PSK Retrieved",
-            "type": "boolean",
-            "description": "Whether the PSK has been retrieved via the portal (one-time use).",
-            "grouping": "Custom Tunnel Builder",
-            "weight": 400,
-            "required": False,
-            "default": False,
-        },
-    )
-    cf_psk_retrieved.content_types.add(vpnprofile_ct)
 
 
 def remove_custom_fields_and_device_type(apps, schema_editor):
@@ -97,8 +67,6 @@ def remove_custom_fields_and_device_type(apps, schema_editor):
         key__in=[
             "custom_tunnel_builder_crypto_map_name",
             "custom_tunnel_builder_crypto_map_sequence",
-            "custom_tunnel_builder_psk_retrieval_token",
-            "custom_tunnel_builder_psk_retrieved",
         ]
     ).delete()
 

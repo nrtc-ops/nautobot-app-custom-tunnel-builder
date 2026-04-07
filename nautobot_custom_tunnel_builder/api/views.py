@@ -24,7 +24,7 @@ from rest_framework.response import Response
 from rest_framework.reverse import reverse
 from rest_framework.views import APIView
 
-from ..onepassword_utils import store_psk_in_1password
+from ..onepassword_utils import get_secret_provider_params, store_psk_in_1password
 from .serializers import PortalTunnelRequestSerializer
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,10 @@ def _get_or_create_member_device(member_name, location_slug, remote_peer_ip, loc
         name="Generic",
         defaults={"description": "Generic/virtual manufacturer for placeholder devices."},
     )
-    device_type = DeviceType.objects.get(model="Member VPN Endpoint", manufacturer=manufacturer)
+    device_type, _ = DeviceType.objects.get_or_create(
+        model="Member VPN Endpoint",
+        manufacturer=manufacturer,
+    )
     role, _ = Role.objects.get_or_create(name="Member")
 
     device_name = f"member-{member_name}-{location_slug}"
@@ -104,7 +107,7 @@ def _get_or_create_location(city, state):
     from nautobot.dcim.models import Location, LocationType  # pylint: disable=import-outside-toplevel
 
     loc_name = f"{city}, {state.upper()}"
-    location_type = LocationType.objects.get(name="Site")
+    location_type, _ = LocationType.objects.get_or_create(name="Site")
 
     location, _ = Location.objects.get_or_create(
         name=loc_name,
@@ -116,7 +119,7 @@ def _get_or_create_location(city, state):
     return location
 
 
-def _clone_vpn_profile(template, name, sequence, psk_token):
+def _clone_vpn_profile(template, name, sequence):
     """Clone a template VPNProfile into a per-tunnel profile with custom fields."""
     profile = VPNProfile.objects.create(
         name=name,
@@ -146,8 +149,6 @@ def _clone_vpn_profile(template, name, sequence, psk_token):
 
     # Set custom fields
     profile._custom_field_data["custom_tunnel_builder_crypto_map_sequence"] = sequence  # pylint: disable=protected-access
-    profile._custom_field_data["custom_tunnel_builder_psk_retrieval_token"] = psk_token  # pylint: disable=protected-access
-    profile._custom_field_data["custom_tunnel_builder_psk_retrieved"] = False  # pylint: disable=protected-access
     profile.save()
 
     return profile
@@ -203,7 +204,7 @@ class PortalTunnelRequestView(APIView):
             # Check for duplicate: any tunnel under this VPN with a spoke endpoint
             # matching the remote peer IP
             for tun in existing_vpn.vpn_tunnels.all():
-                spoke = tun.endpoint_z
+                spoke = tun.endpoint_a
                 if spoke and spoke.source_ipaddress and str(spoke.source_ipaddress.address.ip) == remote_peer_ip:
                     return Response(
                         {
@@ -217,7 +218,7 @@ class PortalTunnelRequestView(APIView):
         # Create full object hierarchy inside a transaction                 #
         # -------------------------------------------------------------- #
         try:
-            tunnel, vpn, psk, psk_token = self._create_tunnel_hierarchy(
+            tunnel, vpn = self._create_tunnel_hierarchy(
                 device,
                 template,
                 member_name,
@@ -257,18 +258,12 @@ class PortalTunnelRequestView(APIView):
             job_model=job_model,
             user=request.user,
             tunnel_id=str(tunnel.pk),
-            pre_shared_key=psk,
         )
 
         # Build response URLs
         status_url = reverse(
             "plugins-api:nautobot_custom_tunnel_builder-api:tunnel-status",
             kwargs={"tunnel_id": tunnel.pk},
-            request=request,
-        )
-        psk_url = reverse(
-            "plugins-api:nautobot_custom_tunnel_builder-api:psk-retrieval",
-            kwargs={"token": psk_token},
             request=request,
         )
 
@@ -279,7 +274,6 @@ class PortalTunnelRequestView(APIView):
                 "vpn_id": vpn.vpn_id,
                 "job_id": str(job_result.pk),
                 "status_url": status_url,
-                "psk_url": psk_url,
             },
             status=status.HTTP_202_ACCEPTED,
         )
@@ -302,7 +296,7 @@ class PortalTunnelRequestView(APIView):
         """Create the full VPN object hierarchy inside an atomic transaction.
 
         Returns:
-            Tuple of (tunnel, vpn, psk, psk_token).
+            Tuple of (tunnel, vpn).
 
         Raises:
             Exception: If any step fails (1Password, DB, etc.), the transaction rolls back.
@@ -327,9 +321,11 @@ class PortalTunnelRequestView(APIView):
                 },
             )
 
-            # 4. Calculate next crypto map sequence for this device
-            existing_tunnels = VPNTunnel.objects.filter(
-                endpoint_a__source_ipaddress=device.primary_ip,
+            # 4. Calculate next crypto map sequence for this device.
+            # select_for_update() locks matching rows to prevent concurrent requests
+            # from computing the same sequence number.
+            existing_tunnels = VPNTunnel.objects.select_for_update(of=("self",)).filter(
+                endpoint_z__source_ipaddress=device.primary_ip,
             ).select_related("vpn_profile")
             sequences = [
                 t.vpn_profile._custom_field_data.get(  # pylint: disable=protected-access
@@ -339,20 +335,26 @@ class PortalTunnelRequestView(APIView):
                 if t.vpn_profile
             ]
             max_seq = max(sequences) if sequences else None
-            next_seq = (max_seq + 10) if max_seq else 3000
+            next_seq = (max_seq + 10) if max_seq is not None else 3000
 
-            # 5. Generate PSK and retrieval token
+            # 5. Generate PSK
             psk = secrets.token_urlsafe(32)
-            psk_token = secrets.token_urlsafe(48)
 
-            # 6. Store PSK in 1Password
+            # 6. Store PSK in 1Password.
+            # NOTE: This external call is inside transaction.atomic(). If a DB step after
+            # this line raises, the transaction rolls back but the 1Password item is already
+            # created (orphaned). Orphaned items can be identified by name pattern:
+            # vpn-psk-nrtc-ms-{member}-{loc_slug}-{seq}
+            # TODO: Move 1Password call outside the transaction (two-phase: commit DB first,
+            # then create 1Password item and update Secret.parameters in a second transaction).
             op_item_id = store_psk_in_1password(psk, member_name, loc_slug, next_seq)
 
             # 7. Create Nautobot Secret + SecretsGroup for this tunnel's PSK
+            _secret_provider, _secret_params = get_secret_provider_params(op_item_id)
             tunnel_secret = Secret.objects.create(
                 name=f"vpn-psk-nrtc-ms-{member_name}-{loc_slug}-{next_seq}",
-                provider="one-password",
-                parameters={"item_id": op_item_id, "field": "password"},
+                provider=_secret_provider,
+                parameters=_secret_params,
             )
             tunnel_sg = SecretsGroup.objects.create(
                 name=f"vpn-sg-nrtc-ms-{member_name}-{loc_slug}-{next_seq}",
@@ -361,7 +363,7 @@ class PortalTunnelRequestView(APIView):
 
             # 8. Clone template VPNProfile
             profile_name = f"vpnprofile-nrtc-ms-{member_name}-{loc_slug}-{next_seq}"
-            profile = _clone_vpn_profile(template, profile_name, next_seq, psk_token)
+            profile = _clone_vpn_profile(template, profile_name, next_seq)
             profile.secrets_group = tunnel_sg
             profile.save()
 
@@ -382,42 +384,32 @@ class PortalTunnelRequestView(APIView):
             hub_prefix = _get_or_create_prefix(hub_prefix_cidr)
             member_prefix = _get_or_create_prefix(member_prefix_cidr)
 
-            # 11. Hub VPNTunnelEndpoint (concentrator) — endpoint_a
+            # 11. Hub VPNTunnelEndpoint (concentrator) — endpoint_z.
+            # get_or_create so multiple portal tunnels share the same hub endpoint
+            # rather than creating a duplicate record per tunnel.
             hub_role, _ = Role.objects.get_or_create(name="Hub")
-            hub_endpoint = VPNTunnelEndpoint.objects.create(
+            hub_endpoint, hub_created = VPNTunnelEndpoint.objects.get_or_create(
                 role=hub_role,
                 source_ipaddress=device.primary_ip,
             )
-            tunnel.endpoint_a = hub_endpoint
-            tunnel.save()
             hub_endpoint.protected_prefixes.add(hub_prefix)
-            existing_hub = (
-                VPNTunnelEndpoint.objects.filter(source_ipaddress=device.primary_ip, role=hub_role)
-                .exclude(pk=hub_endpoint.pk)
-                .first()
-            )
-            crypto_map_name = "VPN"
-            if existing_hub:
-                crypto_map_name = (
-                    existing_hub._custom_field_data.get(  # pylint: disable=protected-access
-                        "custom_tunnel_builder_crypto_map_name", "VPN"
-                    )
-                    or "VPN"
-                )
-            hub_endpoint._custom_field_data["custom_tunnel_builder_crypto_map_name"] = crypto_map_name  # pylint: disable=protected-access
-            hub_endpoint.save()
+            if hub_created:
+                hub_endpoint._custom_field_data["custom_tunnel_builder_crypto_map_name"] = "VPN"  # pylint: disable=protected-access
+                hub_endpoint.save()
+            tunnel.endpoint_z = hub_endpoint
+            tunnel.save()
 
-            # 12. Spoke VPNTunnelEndpoint (member) — endpoint_z
+            # 12. Spoke VPNTunnelEndpoint (member) — endpoint_a
             spoke_role, _ = Role.objects.get_or_create(name="Spoke")
             spoke_endpoint = VPNTunnelEndpoint.objects.create(
                 role=spoke_role,
                 source_ipaddress=member_ip,
             )
             spoke_endpoint.protected_prefixes.add(member_prefix)
-            tunnel.endpoint_z = spoke_endpoint
+            tunnel.endpoint_a = spoke_endpoint
             tunnel.save()
 
-        return tunnel, vpn, psk, psk_token
+        return tunnel, vpn
 
 
 class TunnelStatusView(APIView):
@@ -427,7 +419,7 @@ class TunnelStatusView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, tunnel_id):
-        """Return tunnel status, name, and conditional PSK URL."""
+        """Return tunnel status and name."""
         try:
             tunnel = VPNTunnel.objects.get(pk=tunnel_id)
         except VPNTunnel.DoesNotExist:
@@ -436,87 +428,12 @@ class TunnelStatusView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        profile = tunnel.vpn_profile
-        response_data = {
-            "tunnel_id": str(tunnel.pk),
-            "tunnel_name": tunnel.name,
-            "status": tunnel.status.name,
-        }
-
-        # Include PSK URL only when active and not yet retrieved
-        if profile:
-            psk_token = profile._custom_field_data.get(  # pylint: disable=protected-access
-                "custom_tunnel_builder_psk_retrieval_token"
-            )
-            psk_retrieved = profile._custom_field_data.get(  # pylint: disable=protected-access
-                "custom_tunnel_builder_psk_retrieved", False
-            )
-            if tunnel.status.name == "Active" and psk_token and not psk_retrieved:
-                response_data["psk_url"] = reverse(
-                    "plugins-api:nautobot_custom_tunnel_builder-api:psk-retrieval",
-                    kwargs={"token": psk_token},
-                    request=request,
-                )
-
-        return Response(response_data)
-
-
-class PSKRetrievalView(APIView):
-    """One-time PSK retrieval by token. Returns 410 Gone if already retrieved."""
-
-    authentication_classes = [TokenAuthentication, SessionAuthentication]
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, token):
-        """Return the PSK from secrets and mark as retrieved (one-time use)."""
-        # Find the VPNProfile by retrieval token
-        try:
-            profile = VPNProfile.objects.get(
-                _custom_field_data__custom_tunnel_builder_psk_retrieval_token=token,
-            )
-        except VPNProfile.DoesNotExist:
-            return Response(
-                {"detail": "Invalid or expired PSK token."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        cf = profile._custom_field_data  # pylint: disable=protected-access
-
-        if cf.get("custom_tunnel_builder_psk_retrieved", False):
-            return Response(
-                {"detail": "PSK has already been retrieved. This token is no longer valid."},
-                status=status.HTTP_410_GONE,
-            )
-
-        # Retrieve PSK from the secrets group
-        if not profile.secrets_group:
-            return Response(
-                {"detail": "No secrets group configured for this tunnel profile."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-        try:
-            secret = profile.secrets_group.secrets.first()
-            psk = secret.get_value()
-        except Exception:  # pylint: disable=broad-exception-caught
-            logger.exception("Failed to retrieve PSK from secrets backend.")
-            return Response(
-                {"detail": "Failed to retrieve PSK from secrets backend."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-        # Mark as retrieved and clear the token
-        profile._custom_field_data["custom_tunnel_builder_psk_retrieved"] = True  # pylint: disable=protected-access
-        profile._custom_field_data["custom_tunnel_builder_psk_retrieval_token"] = ""  # pylint: disable=protected-access
-        profile.save()
-
-        # Find the associated tunnel for the response
-        tunnel = VPNTunnel.objects.filter(vpn_profile=profile).first()
-
         return Response(
             {
-                "tunnel_id": str(tunnel.pk) if tunnel else "",
-                "tunnel_name": tunnel.name if tunnel else "",
-                "pre_shared_key": psk,
+                "tunnel_id": str(tunnel.pk),
+                "tunnel_name": tunnel.name,
+                "status": tunnel.status.name,
             }
         )
+
+

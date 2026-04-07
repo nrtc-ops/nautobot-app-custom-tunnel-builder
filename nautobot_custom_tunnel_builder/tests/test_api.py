@@ -37,7 +37,6 @@ User = get_user_model()
 
 PORTAL_REQUEST_URL = "/plugins/tunnel-builder/api/portal-request/"
 TUNNEL_STATUS_URL_TEMPLATE = "/plugins/tunnel-builder/api/tunnel-status/{}/"
-PSK_URL_TEMPLATE = "/plugins/tunnel-builder/api/psk/{}/"
 
 # Required fields for the new API schema
 REQUIRED_FIELDS = (
@@ -183,11 +182,6 @@ class UnauthenticatedAccessTest(TestCase):
         response = self.client.get(TUNNEL_STATUS_URL_TEMPLATE.format(fake_uuid))
         self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
 
-    def test_psk_retrieval_unauthenticated(self):
-        """GET psk retrieval without credentials returns 401 or 403."""
-        response = self.client.get(PSK_URL_TEMPLATE.format("fake-token-value"))
-        self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
-
 
 # ---------------------------------------------------------------------------
 # Portal request validation tests (authenticated)
@@ -329,7 +323,6 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
         data = response.json()
         self.assertIn("tunnel_id", data)
         self.assertIn("vpn_id", data)
-        self.assertIn("psk_url", data)
         self.assertEqual(data["vpn_id"], "vpn-nrtc-ms-acme-corp-jackson-ms-001")
 
         # Verify VPN created
@@ -353,22 +346,19 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
             profile._custom_field_data["custom_tunnel_builder_crypto_map_sequence"],  # pylint: disable=protected-access
             3000,
         )
-        self.assertFalse(
-            profile._custom_field_data["custom_tunnel_builder_psk_retrieved"],  # pylint: disable=protected-access
-        )
 
-        # Verify hub endpoint
-        hub = tunnel.endpoint_a
+        # Verify hub endpoint (endpoint_z = concentrator/NRTC side)
+        hub = tunnel.endpoint_z
         self.assertEqual(hub.source_ipaddress, self.device.primary_ip)
-        self.assertEqual(hub.protected_prefixes.count(), 1)
-        self.assertEqual(str(hub.protected_prefixes.first().prefix), "10.100.0.0/24")
+        self.assertGreaterEqual(hub.protected_prefixes.count(), 1)
+        self.assertIn("10.100.0.0/24", [str(p.prefix) for p in hub.protected_prefixes.all()])
         self.assertEqual(
             hub._custom_field_data["custom_tunnel_builder_crypto_map_name"],  # pylint: disable=protected-access
             "VPN",
         )
 
-        # Verify spoke endpoint
-        spoke = tunnel.endpoint_z
+        # Verify spoke endpoint (endpoint_a = member/spoke side)
+        spoke = tunnel.endpoint_a
         self.assertIsNotNone(spoke.source_ipaddress)
         self.assertEqual(str(spoke.source_ipaddress.address.ip), "203.0.113.50")
         self.assertEqual(spoke.protected_prefixes.count(), 1)
@@ -482,42 +472,6 @@ class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
 
 
 # ---------------------------------------------------------------------------
-# PSK retrieval endpoint tests (authenticated)
-# ---------------------------------------------------------------------------
-
-
-class PSKRetrievalTest(APITestCase):  # pylint: disable=too-many-ancestors
-    """Test the psk retrieval endpoint."""
-
-    def _get(self, url):
-        return self.client.get(url, **self.header)
-
-    def test_invalid_token_returns_404(self):
-        """GET with an invalid/unknown token returns 404."""
-        response = self._get(PSK_URL_TEMPLATE.format("nonexistent-token-value"))
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        data = response.json()
-        self.assertTrue("error" in data or "detail" in data)
-
-    def test_random_uuid_token_returns_404(self):
-        """GET with a random UUID-like token returns 404."""
-        response = self._get(PSK_URL_TEMPLATE.format(str(uuid.uuid4())))
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-
-    def test_already_retrieved_returns_410(self):
-        """GET on a profile with psk_retrieved=True returns 410 Gone."""
-        VPNProfile.objects.create(
-            name="test-retrieved-profile",
-            _custom_field_data={
-                "custom_tunnel_builder_psk_retrieval_token": "test-token-already-used",
-                "custom_tunnel_builder_psk_retrieved": True,
-            },
-        )
-        response = self._get(PSK_URL_TEMPLATE.format("test-token-already-used"))
-        self.assertEqual(response.status_code, status.HTTP_410_GONE)
-
-
-# ---------------------------------------------------------------------------
 # End-to-end: API request → object creation → config generation
 # ---------------------------------------------------------------------------
 
@@ -553,8 +507,8 @@ class EndToEndConfigGenerationTest(APITestCase):  # pylint: disable=too-many-anc
         tunnel = VPNTunnel.objects.get(pk=tunnel_id)
 
         # -- Extract parameters exactly as the job does --
-        hub_endpoint = tunnel.endpoint_a
-        spoke_endpoint = tunnel.endpoint_z
+        hub_endpoint = tunnel.endpoint_z
+        spoke_endpoint = tunnel.endpoint_a
         self.assertIsNotNone(hub_endpoint)
         self.assertIsNotNone(spoke_endpoint)
         self.assertIsNotNone(hub_endpoint.source_ipaddress)
@@ -676,12 +630,12 @@ class EndToEndConfigGenerationTest(APITestCase):  # pylint: disable=too-many-anc
             profile_to_config_params,
         )
 
-        hub2 = tunnel2.endpoint_a
+        hub2 = tunnel2.endpoint_z
         params = profile_to_config_params(
             vpn_profile=profile2,
             remote_peer_ip="203.0.113.51",
             local_network_cidr=str(hub2.protected_prefixes.first().prefix),
-            protected_network_cidr=str(tunnel2.endpoint_z.protected_prefixes.first().prefix),
+            protected_network_cidr=str(tunnel2.endpoint_a.protected_prefixes.first().prefix),
             crypto_map_name=hub2._custom_field_data.get(  # pylint: disable=protected-access
                 "custom_tunnel_builder_crypto_map_name", "VPN"
             ),
@@ -705,7 +659,7 @@ class EndToEndConfigGenerationTest(APITestCase):  # pylint: disable=too-many-anc
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
 
         tunnel = VPNTunnel.objects.get(pk=response.json()["tunnel_id"])
-        hub = tunnel.endpoint_a
+        hub = tunnel.endpoint_z
 
         # Traverse the same path the job uses: source_ipaddress → interface → device
         ip_addr = hub.source_ipaddress

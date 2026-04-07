@@ -188,9 +188,10 @@ def run_command(context, command, service="nautobot", **kwargs):
     help={
         "force_rm": "Always remove intermediate containers",
         "cache": "Whether to use Docker's cache when building the image (defaults to enabled)",
+        "fake_cisco": "Also build the fake-cisco SSH target image for integration testing.",
     }
 )
-def build(context, force_rm=False, cache=True):
+def build(context, force_rm=False, cache=True, fake_cisco=False):
     """Build Nautobot docker image."""
     command = "build"
 
@@ -198,6 +199,9 @@ def build(context, force_rm=False, cache=True):
         command += " --no-cache"
     if force_rm:
         command += " --force-rm"
+
+    if fake_cisco:
+        context.nautobot_custom_tunnel_builder.compose_files.append("docker-compose.fake-cisco.yml")
 
     print(f"Building Nautobot with Python {context.nautobot_custom_tunnel_builder.python_ver}...")
     docker_compose(context, command)
@@ -290,9 +294,16 @@ def debug(context, service=""):
     docker_compose(context, "up", service=service)
 
 
-@task(help={"service": "If specified, only affect this service."})
-def start(context, service=""):
+@task(
+    help={
+        "service": "If specified, only affect this service.",
+        "fake_cisco": "Also start the fake-cisco SSH target for integration testing.",
+    }
+)
+def start(context, service="", fake_cisco=False):
     """Start specified or all services and its dependencies in detached mode."""
+    if fake_cisco:
+        context.nautobot_custom_tunnel_builder.compose_files.append("docker-compose.fake-cisco.yml")
     print("Starting Nautobot in detached mode...")
     docker_compose(context, "up --detach", service=service)
 
