@@ -117,8 +117,10 @@ class BuildIosxePolicyConfigIKEv2Test(TestCase):
     def test_contains_ikev2_proposal(self):
         self.assertIn("crypto ikev2 proposal IKEv2-PROPOSAL", self.commands)
 
-    def test_contains_ikev2_policy(self):
-        self.assertIn("crypto ikev2 policy IKEv2-POLICY", self.commands)
+    def test_no_ikev2_policy_block(self):
+        """Hub uses a shared policy (e.g. 1_Universal_Policy); per-tunnel policy is not generated."""
+        policy_lines = [c for c in self.commands if c.startswith("crypto ikev2 policy")]
+        self.assertEqual(policy_lines, [])
 
     def test_contains_ikev2_keyring(self):
         self.assertIn("crypto ikev2 keyring IKEv2-KEYRING", self.commands)
@@ -173,8 +175,10 @@ class BuildIosxePolicyConfigIKEv2Test(TestCase):
         self.assertEqual(interface_lines, [])
 
     def test_psk_in_keyring(self):
-        self.assertIn("  pre-shared-key local SuperSecret123!", self.commands)
-        self.assertIn("  pre-shared-key remote SuperSecret123!", self.commands)
+        self.assertIn("  pre-shared-key SuperSecret123!", self.commands)
+        # Must NOT have separate local/remote declarations
+        self.assertNotIn("  pre-shared-key local SuperSecret123!", self.commands)
+        self.assertNotIn("  pre-shared-key remote SuperSecret123!", self.commands)
 
     def test_ike_lifetime_in_profile(self):
         self.assertIn(f" lifetime {self.data['ike_lifetime']}", self.commands)
@@ -282,7 +286,13 @@ class BuildIosxePolicyConfigOrderTest(TestCase):
         map_idx = next(i for i, c in enumerate(commands) if c.startswith("crypto map"))
         self.assertLess(ts_idx, map_idx)
 
-    def test_crypto_map_match_is_last(self):
-        """Last command should be the crypto map match address line."""
+    def test_exit_closes_each_section(self):
+        """Every config sub-block must be closed with 'exit'."""
         commands = build_iosxe_policy_config(_ikev2_data())
-        self.assertTrue(commands[-1].strip().startswith("match address"))
+        self.assertEqual(commands[-1], "exit")
+
+    def test_crypto_map_exit_after_match(self):
+        """'exit' must follow the 'match address' line that closes the crypto map."""
+        commands = build_iosxe_policy_config(_ikev2_data())
+        match_idx = next(i for i, c in enumerate(commands) if c.strip().startswith("match address"))
+        self.assertEqual(commands[match_idx + 1], "exit")

@@ -111,6 +111,7 @@ def _build_ikev1_commands(data: dict) -> list[str]:
         " authentication pre-share",
         f" group {data['ike_dh_group']}",
         f" lifetime {data['ike_lifetime']}",
+        "exit",
         f"crypto isakmp key {psk} address {remote_peer}",
     ]
 
@@ -126,19 +127,20 @@ def _build_ikev2_commands(data: dict) -> list[str]:
         f" encryption {data['ikev2_encryption']}",
         f" integrity {data['ikev2_integrity']}",
         f" group {data['ike_dh_group']}",
-        f"crypto ikev2 policy {data['ikev2_policy_name']}",
-        f" proposal {data['ikev2_proposal_name']}",
+        "exit",
         f"crypto ikev2 keyring {data['ikev2_keyring_name']}",
         f" peer {peer_name}",
         f"  address {remote_peer}",
-        f"  pre-shared-key local {psk}",
-        f"  pre-shared-key remote {psk}",
+        f"  pre-shared-key {psk}",
+        " exit",
+        "exit",
         f"crypto ikev2 profile {data['ikev2_profile_name']}",
         f" match identity remote address {remote_peer} 255.255.255.255",
         " authentication local pre-share",
         " authentication remote pre-share",
         f" keyring local {data['ikev2_keyring_name']}",
         f" lifetime {data['ike_lifetime']}",
+        "exit",
     ]
 
 
@@ -175,6 +177,7 @@ def build_iosxe_policy_config(data: dict) -> list[str]:
     # Crypto ACL (interesting traffic)
     commands.append(f"ip access-list extended {acl_name}")
     commands.append(f" permit ip {local_net} {local_wildcard} {remote_net} {remote_wildcard}")
+    commands.append("exit")
 
     # IPsec Transform-Set (Phase 2)
     if ipsec_integ:
@@ -183,6 +186,7 @@ def build_iosxe_policy_config(data: dict) -> list[str]:
         # GCM — no separate integrity algorithm
         commands.append(f"crypto ipsec transform-set {ts_name} {ipsec_enc}")
     commands.append(" mode tunnel")
+    commands.append("exit")
 
     # Crypto Map
     commands.append(f"crypto map {map_name} {map_seq} ipsec-isakmp")
@@ -192,6 +196,7 @@ def build_iosxe_policy_config(data: dict) -> list[str]:
     if ike_version == "ikev2":
         commands.append(f" set ikev2-profile {data['ikev2_profile_name']}")
     commands.append(f" match address {acl_name}")
+    commands.append("exit")
 
     return commands
 
@@ -618,15 +623,20 @@ class PortalBuildIpsecTunnel(Job):
             self.logger.error("No spoke endpoint with source IP found on tunnel '%s'.", tunnel.name)
             raise ValueError(f"Tunnel '{tunnel.name}' has no spoke endpoint with a source IP address.")
 
-        # Resolve device from hub endpoint via IPAddressToInterface (Nautobot 3.x)
-        assignment = IPAddressToInterface.objects.filter(
-            ip_address=hub_endpoint.source_ipaddress
-        ).first()
-        if not assignment:
-            raise ValueError(
-                f"Hub IP on tunnel '{tunnel.name}' is not assigned to any interface."
-            )
-        device = assignment.interface.device
+        # Resolve device from hub endpoint.
+        # Prefer the direct device FK (set when the endpoint is pre-configured or
+        # created by the portal). Fall back to IPAddressToInterface for older records.
+        if hub_endpoint.device:
+            device = hub_endpoint.device
+        else:
+            assignment = IPAddressToInterface.objects.filter(
+                ip_address=hub_endpoint.source_ipaddress
+            ).first()
+            if not assignment:
+                raise ValueError(
+                    f"Hub IP on tunnel '{tunnel.name}' is not assigned to any interface."
+                )
+            device = assignment.interface.device
         self.logger.info("Device resolved: %s", device.name)
 
         # Read parameters from native objects

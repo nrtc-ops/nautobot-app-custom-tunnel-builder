@@ -25,6 +25,7 @@ from nautobot.vpn.models import (
     VPNProfilePhase1PolicyAssignment,
     VPNProfilePhase2PolicyAssignment,
     VPNTunnel,
+    VPNTunnelEndpoint,
 )
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -47,8 +48,7 @@ REQUIRED_FIELDS = (
     "device",
     "template_vpn_profile",
     "remote_peer_ip",
-    "hub_protected_prefix",
-    "member_protected_prefix",
+    "member_protected_prefixes",
 )
 
 # Mock path for 1Password SDK
@@ -145,6 +145,28 @@ def _create_template_vpn_profile():
     return profile
 
 
+def _create_hub_endpoint(device, hub_prefix_cidr="10.100.0.0/24"):
+    """Pre-configure a hub VPNTunnelEndpoint with a protected prefix for the given device."""
+    hub_role, _ = Role.objects.get_or_create(name="Hub")
+    hub_endpoint, created = VPNTunnelEndpoint.objects.get_or_create(
+        device=device,
+        role=hub_role,
+        defaults={"source_ipaddress": device.primary_ip},
+    )
+    if created:
+        hub_endpoint._custom_field_data["custom_tunnel_builder_crypto_map_name"] = "VPN"  # pylint: disable=protected-access
+        hub_endpoint.save()
+    global_ns, _ = Namespace.objects.get_or_create(name="Global")
+    prefix_status = Status.objects.get_for_model(Prefix).get(name="Active")
+    hub_prefix, _ = Prefix.objects.get_or_create(
+        prefix=hub_prefix_cidr,
+        namespace=global_ns,
+        defaults={"status": prefix_status},
+    )
+    hub_endpoint.protected_prefixes.add(hub_prefix)
+    return hub_endpoint
+
+
 def _valid_payload(device, template_profile):
     """Return a valid portal request payload."""
     return {
@@ -155,8 +177,7 @@ def _valid_payload(device, template_profile):
         "device": str(device.pk),
         "template_vpn_profile": str(template_profile.pk),
         "remote_peer_ip": "203.0.113.50",
-        "hub_protected_prefix": "10.100.0.0/24",
-        "member_protected_prefix": "192.168.1.0/24",
+        "member_protected_prefixes": ["192.168.1.0/24"],
     }
 
 
@@ -213,8 +234,7 @@ class PortalRequestValidationTest(APITestCase):  # pylint: disable=too-many-ance
             "device": str(uuid.uuid4()),
             "template_vpn_profile": str(uuid.uuid4()),
             "remote_peer_ip": "203.0.113.1",
-            "hub_protected_prefix": "10.100.0.0/24",
-            "member_protected_prefix": "192.168.1.0/24",
+            "member_protected_prefixes": ["192.168.1.0/24"],
         }
         response = self._post(PORTAL_REQUEST_URL, payload)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -230,32 +250,14 @@ class PortalRequestValidationTest(APITestCase):  # pylint: disable=too-many-ance
             "device": str(uuid.uuid4()),
             "template_vpn_profile": str(uuid.uuid4()),
             "remote_peer_ip": "203.0.113.1",
-            "hub_protected_prefix": "10.100.0.0/24",
-            "member_protected_prefix": "192.168.1.0/24",
+            "member_protected_prefixes": ["192.168.1.0/24"],
         }
         response = self._post(PORTAL_REQUEST_URL, payload)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("location_state", response.json())
 
-    def test_invalid_hub_prefix_returns_400(self):
-        """POST with invalid hub_protected_prefix returns 400."""
-        payload = {
-            "member_name": "acme-corp",
-            "member_display_name": "Acme Corp",
-            "location_city": "Jackson",
-            "location_state": "MS",
-            "device": str(uuid.uuid4()),
-            "template_vpn_profile": str(uuid.uuid4()),
-            "remote_peer_ip": "203.0.113.1",
-            "hub_protected_prefix": "not-a-cidr",
-            "member_protected_prefix": "192.168.1.0/24",
-        }
-        response = self._post(PORTAL_REQUEST_URL, payload)
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("hub_protected_prefix", response.json())
-
-    def test_invalid_member_prefix_returns_400(self):
-        """POST with invalid member_protected_prefix returns 400."""
+    def test_hub_protected_prefix_field_ignored(self):
+        """hub_protected_prefix is no longer accepted — it is read from the hub endpoint."""
         payload = {
             "member_name": "acme-corp",
             "member_display_name": "Acme Corp",
@@ -265,11 +267,28 @@ class PortalRequestValidationTest(APITestCase):  # pylint: disable=too-many-ance
             "template_vpn_profile": str(uuid.uuid4()),
             "remote_peer_ip": "203.0.113.1",
             "hub_protected_prefix": "10.100.0.0/24",
-            "member_protected_prefix": "garbage",
+            "member_protected_prefixes": ["192.168.1.0/24"],
+        }
+        response = self._post(PORTAL_REQUEST_URL, payload)
+        # Field is unknown to the serializer; request fails on device/profile UUID validation,
+        # not on hub_protected_prefix — confirming the field is no longer required or validated.
+        self.assertNotIn("hub_protected_prefix", response.json())
+
+    def test_invalid_member_prefix_returns_400(self):
+        """POST with invalid member_protected_prefixes entry returns 400."""
+        payload = {
+            "member_name": "acme-corp",
+            "member_display_name": "Acme Corp",
+            "location_city": "Jackson",
+            "location_state": "MS",
+            "device": str(uuid.uuid4()),
+            "template_vpn_profile": str(uuid.uuid4()),
+            "remote_peer_ip": "203.0.113.1",
+            "member_protected_prefixes": ["garbage"],
         }
         response = self._post(PORTAL_REQUEST_URL, payload)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("member_protected_prefix", response.json())
+        self.assertIn("member_protected_prefixes", response.json())
 
     def test_invalid_remote_peer_ip_returns_400(self):
         """POST with an invalid IP address returns 400."""
@@ -281,8 +300,7 @@ class PortalRequestValidationTest(APITestCase):  # pylint: disable=too-many-ance
             "device": str(uuid.uuid4()),
             "template_vpn_profile": str(uuid.uuid4()),
             "remote_peer_ip": "not-an-ip",
-            "hub_protected_prefix": "10.100.0.0/24",
-            "member_protected_prefix": "192.168.1.0/24",
+            "member_protected_prefixes": ["192.168.1.0/24"],
         }
         response = self._post(PORTAL_REQUEST_URL, payload)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -306,6 +324,8 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
         DeviceType.objects.get_or_create(model="Member VPN Endpoint", manufacturer=manufacturer)
         # Ensure "Site" LocationType exists
         LocationType.objects.get_or_create(name="Site")
+        # Pre-configure hub endpoint with protected prefix (required before portal can provision)
+        _create_hub_endpoint(cls.device)
 
     def _post(self, url, data=None):
         return self.client.post(url, data=data or {}, format="json", **self.header)
@@ -364,11 +384,11 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
         self.assertEqual(spoke.protected_prefixes.count(), 1)
         self.assertEqual(str(spoke.protected_prefixes.first().prefix), "192.168.1.0/24")
 
-        # Verify member device created
+        # Verify member device created with a per-peer interface
         member_device = Device.objects.get(name="member-acme-corp-jackson-ms")
         self.assertEqual(member_device.device_type.model, "Member VPN Endpoint")
-        dummy0 = Interface.objects.get(device=member_device, name="dummy0")
-        self.assertIsNotNone(dummy0)
+        peer_intf = Interface.objects.get(device=member_device, name="peer-203-0-113-50")
+        self.assertIsNotNone(peer_intf)
 
         # Verify 1Password was called
         _mock_op.assert_called_once()
@@ -450,6 +470,24 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
         self.assertTrue(Location.objects.filter(name="Tupelo, MS").exists())
 
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
+    def test_multiple_member_prefixes_added_to_spoke_endpoint(self, _mock_op):
+        """Multiple CIDRs in member_protected_prefixes are all added to the spoke endpoint."""
+        payload = _valid_payload(self.device, self.template_profile)
+        payload["member_name"] = "multi-prefix-member"
+        payload["member_display_name"] = "Multi Prefix Member"
+        payload["remote_peer_ip"] = "203.0.113.99"
+        payload["member_protected_prefixes"] = ["192.168.10.0/24", "10.50.0.0/16"]
+        response = self._post(PORTAL_REQUEST_URL, payload)
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        tunnel = VPNTunnel.objects.get(pk=response.json()["tunnel_id"])
+        spoke = tunnel.endpoint_a
+        self.assertEqual(spoke.protected_prefixes.count(), 2)
+        prefix_strs = {str(p.prefix) for p in spoke.protected_prefixes.all()}
+        self.assertIn("192.168.10.0/24", prefix_strs)
+        self.assertIn("10.50.0.0/16", prefix_strs)
+
 
 # ---------------------------------------------------------------------------
 # Tunnel status endpoint tests (authenticated)
@@ -469,6 +507,31 @@ class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         data = response.json()
         self.assertTrue("error" in data or "detail" in data)
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-psk-test")
+    @patch("nautobot.extras.models.Secret.get_value", return_value="TestPSKReturnedOnce!")
+    def test_active_tunnel_returns_psk(self, _mock_get_value, _mock_op):
+        """Status endpoint returns pre_shared_key when tunnel is Active."""
+        device = _create_test_device(name="psk-test-router")
+        template = _create_template_vpn_profile()
+        manufacturer, _ = Manufacturer.objects.get_or_create(name="Generic")
+        DeviceType.objects.get_or_create(model="Member VPN Endpoint", manufacturer=manufacturer)
+        LocationType.objects.get_or_create(name="Site")
+        _create_hub_endpoint(device)
+
+        payload = _valid_payload(device, template)
+        payload["member_name"] = "psk-test-member"
+        payload["remote_peer_ip"] = "203.0.113.77"
+        post_response = self.client.post(PORTAL_REQUEST_URL, data=payload, format="json", **self.header)
+        self.assertEqual(post_response.status_code, status.HTTP_202_ACCEPTED)
+
+        tunnel_id = post_response.json()["tunnel_id"]
+        response = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data["status"], "Active")
+        self.assertIn("pre_shared_key", data)
+        self.assertEqual(data["pre_shared_key"], "TestPSKReturnedOnce!")
 
 
 # ---------------------------------------------------------------------------
@@ -490,6 +553,8 @@ class EndToEndConfigGenerationTest(APITestCase):  # pylint: disable=too-many-anc
         manufacturer, _ = Manufacturer.objects.get_or_create(name="Generic")
         DeviceType.objects.get_or_create(model="Member VPN Endpoint", manufacturer=manufacturer)
         LocationType.objects.get_or_create(name="Site")
+        # Pre-configure hub endpoint with protected prefix (required before portal can provision)
+        _create_hub_endpoint(cls.device)
 
     def _post(self, url, data=None):
         return self.client.post(url, data=data or {}, format="json", **self.header)
@@ -571,13 +636,12 @@ class EndToEndConfigGenerationTest(APITestCase):  # pylint: disable=too-many-anc
         self.assertIn(" integrity sha256", commands)
         self.assertIn(" group 19", commands)
 
-        # IKEv2 policy
-        self.assertIn("crypto ikev2 policy PORTAL-POL-3000", commands)
+        # No per-tunnel IKEv2 policy — hub uses a shared policy
+        self.assertNotIn("crypto ikev2 policy PORTAL-POL-3000", commands)
 
-        # IKEv2 keyring with PSK
+        # IKEv2 keyring with single combined PSK declaration
         self.assertIn("crypto ikev2 keyring PORTAL-KR-3000", commands)
-        self.assertIn("  pre-shared-key local TestPSK123!", commands)
-        self.assertIn("  pre-shared-key remote TestPSK123!", commands)
+        self.assertIn("  pre-shared-key TestPSK123!", commands)
 
         # IKEv2 profile
         self.assertIn("crypto ikev2 profile PORTAL-PROF-3000", commands)

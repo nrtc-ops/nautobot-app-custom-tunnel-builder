@@ -142,8 +142,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" \
         \"device\": \"${HUB_DEVICE_UUID}\",
         \"template_vpn_profile\": \"${TEMPLATE_PROFILE_UUID}\",
         \"remote_peer_ip\": \"203.0.113.100\",
-        \"hub_protected_prefix\": \"10.100.0.0/24\",
-        \"member_protected_prefix\": \"192.168.200.0/24\"
+        \"member_protected_prefixes\": [\"192.168.200.0/24\"]
     }")
 
 HTTP_STATUS=$(echo "$RESPONSE" | tail -1)

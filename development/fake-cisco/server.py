@@ -143,7 +143,9 @@ class _Session:
                 self._send(f"\r\n{self._prompt()}")
                 return
             if cmd_lower == "exit":
-                self.state = "privileged"
+                # On real IOS-XE, 'exit' from a sub-mode returns to the parent
+                # config mode, not to privileged exec.  Stay in config mode so
+                # that subsequent config commands continue to be accepted.
                 self._send(f"\r\n{self._prompt()}")
                 return
             # A real config command — record it
