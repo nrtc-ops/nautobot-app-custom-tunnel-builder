@@ -310,7 +310,8 @@ jobs:
     needs: "generate-lockfile"
     if: >
       contains(fromJson('["main","develop"]'), github.base_ref) &&
-      (github.head_ref != 'main') && (!startsWith(github.head_ref, 'release'))
+      (github.head_ref != 'main') && (!startsWith(github.head_ref, 'release')) &&
+      (!startsWith(github.head_ref, 'dependabot/'))
     runs-on: "ubuntu-latest"
     steps:
       - name: "Check out repository code"

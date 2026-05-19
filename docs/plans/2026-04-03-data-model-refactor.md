@@ -66,6 +66,7 @@ nautobot_custom_tunnel_builder/
 The design doc says: "Neither the portal job nor the form job should use `wan_interface`. The crypto map is already applied to the concentrator's WAN interface." This is a standalone change that unblocks the rest.
 
 **Files:**
+
 - Modify: `nautobot_custom_tunnel_builder/jobs.py:147-197` (build_iosxe_policy_config)
 - Modify: `nautobot_custom_tunnel_builder/jobs.py:229-555` (BuildIpsecTunnel job vars + run)
 - Modify: `nautobot_custom_tunnel_builder/forms.py:89-95` (wan_interface field)
@@ -213,6 +214,7 @@ Neither the portal job nor the internal form job needs to re-apply it."
 The current migration (0001) creates 4 custom fields but is missing `psk_encrypted` on VPNProfile.
 
 **Files:**
+
 - Create: `nautobot_custom_tunnel_builder/migrations/0002_add_psk_encrypted.py`
 
 - [ ] **Step 1: Create the migration file**
@@ -288,6 +290,7 @@ git commit -m "feat: add psk_encrypted custom field migration on VPNProfile"
 The design doc specifies sequence starts at 2000 with step 10. Add constants so the values aren't magic numbers.
 
 **Files:**
+
 - Modify: `nautobot_custom_tunnel_builder/constants.py`
 
 - [ ] **Step 1: Add constants**
@@ -317,6 +320,7 @@ git commit -m "feat: add portal sequence start/step constants"
 The API request shape changes per the design doc: new member/location fields, renamed network fields, `template_vpn_profile` instead of `vpn_profile`.
 
 **Files:**
+
 - Modify: `nautobot_custom_tunnel_builder/api/serializers.py`
 - Modify: `nautobot_custom_tunnel_builder/tests/test_api.py`
 
@@ -556,6 +560,7 @@ Added template_vpn_profile (optional, for forward compatibility)."
 This is the core refactor. Replace the flat custom-field approach with the 7-step object creation flow from the design doc.
 
 **Files:**
+
 - Modify: `nautobot_custom_tunnel_builder/api/views.py`
 
 - [ ] **Step 1: Rewrite `PortalTunnelRequestView.post()`**
@@ -1018,6 +1023,7 @@ PSK fields moved from VPNTunnel to VPNProfile custom fields."
 The portal job currently reads tunnel params from VPNTunnel `_custom_field_data`. After the refactor, it reads from native fields on the VPN hierarchy objects.
 
 **Files:**
+
 - Modify: `nautobot_custom_tunnel_builder/jobs.py` (PortalBuildIpsecTunnel class)
 
 - [ ] **Step 1: Rewrite `PortalBuildIpsecTunnel.run()`**
