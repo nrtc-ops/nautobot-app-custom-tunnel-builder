@@ -409,6 +409,25 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
         _mock_op.assert_called_once()
 
     @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
+    def test_202_response_pins_full_contract_body(self, _mock_op):
+        """The 202 response body is the full portal contract: exactly tunnel_id,
+        tunnel_name, vpn_id, job_id, and status_url, all non-empty, with status_url
+        pointing at this tunnel's status endpoint. The Rails portal persists all
+        five fields, so a regression dropping or renaming one would otherwise sail
+        through undetected."""
+        payload = _valid_payload(self.device, self.template_profile)
+        response = self._post(PORTAL_REQUEST_URL, payload)
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        data = response.json()
+
+        self.assertEqual(set(data.keys()), {"tunnel_id", "tunnel_name", "vpn_id", "job_id", "status_url"})
+        for key in ("tunnel_id", "tunnel_name", "vpn_id", "job_id", "status_url"):
+            self.assertTrue(data[key], f"Expected non-empty value for '{key}'")
+
+        self.assertIn(f"/tunnel-status/{data['tunnel_id']}/", data["status_url"])
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
     def test_vpn_reuse_same_member_location(self, _mock_op):
         """Second tunnel for same member+location reuses the VPN object."""
         payload = _valid_payload(self.device, self.template_profile)
@@ -428,7 +447,12 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
 
     @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
     def test_duplicate_detection_returns_409(self, _mock_op):
-        """Second request with identical parameters returns 409 Conflict."""
+        """An identical replay (same request_id) returns 409 Conflict.
+
+        The request-id dedupe check runs before the name+peer duplicate check,
+        so an exact replay of the same payload is caught by the request-id path,
+        not the name+peer path. See test_same_params_different_request_id_still_409
+        for a test that isolates the name+peer duplicate check."""
         payload = _valid_payload(self.device, self.template_profile)
         resp1 = self._post(PORTAL_REQUEST_URL, payload)
         self.assertEqual(resp1.status_code, status.HTTP_202_ACCEPTED)
@@ -725,6 +749,37 @@ class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
         data = second.json()
         self.assertEqual(data["status"], "Active")
         self.assertNotIn("pre_shared_key", data)
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-psk-test")
+    def test_psk_retrieval_failure_does_not_burn_latch(self, _mock_op):
+        """A transient Secret.get_value() failure on the first Active poll must not
+        burn the one-shot latch: the response is still 200/Active with no
+        pre_shared_key, the profile's custom_tunnel_builder_psk_retrieved CF stays
+        falsy, and a later poll (once the secret backend recovers) still returns
+        the PSK."""
+        tunnel_id = self._post_tunnel("psk-failure-member", "203.0.113.82")
+        self._activate(tunnel_id)
+
+        with patch("nautobot.extras.models.Secret.get_value", side_effect=Exception("op down")):
+            response = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data["status"], "Active")
+        self.assertNotIn("pre_shared_key", data)
+
+        tunnel = VPNTunnel.objects.get(pk=tunnel_id)
+        tunnel.vpn_profile.refresh_from_db()
+        self.assertFalse(
+            tunnel.vpn_profile._custom_field_data.get("custom_tunnel_builder_psk_retrieved")  # pylint: disable=protected-access
+        )
+
+        with patch("nautobot.extras.models.Secret.get_value", return_value="RecoveredAfterOutage!"):
+            response2 = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id))
+        self.assertEqual(response2.status_code, status.HTTP_200_OK)
+        data2 = response2.json()
+        self.assertEqual(data2["status"], "Active")
+        self.assertIn("pre_shared_key", data2)
+        self.assertEqual(data2["pre_shared_key"], "RecoveredAfterOutage!")
 
     @patch(OP_MOCK_PATH, return_value="fake-op-item-id-psk-test")
     @patch("nautobot.extras.models.Secret.get_value", return_value="TestPSKReturnedOnce!")
