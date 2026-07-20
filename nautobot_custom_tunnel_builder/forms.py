@@ -28,6 +28,16 @@ class IpsecTunnelForm(forms.Form):
     """
 
     # ------------------------------------------------------------------ #
+    # Member identification                                                #
+    # ------------------------------------------------------------------ #
+    member_name = forms.CharField(
+        label="Member Name",
+        max_length=40,
+        help_text="Member identifier used in crypto object names (e.g. 'acme-corp'). Lowercase, hyphens only. Max 40 characters.",
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "acme-corp"}),
+    )
+
+    # ------------------------------------------------------------------ #
     # Device                                                               #
     # ------------------------------------------------------------------ #
     device = forms.ModelChoiceField(
@@ -78,9 +88,10 @@ class IpsecTunnelForm(forms.Form):
     crypto_acl_name = forms.CharField(
         label="Crypto ACL Name",
         max_length=64,
-        initial="VPN-ACL",
-        help_text="Name of the extended ACL that defines interesting traffic.",
-        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "VPN-ACL"}),
+        initial="",
+        required=False,
+        help_text="Auto-generated from member name + sequence.",
+        widget=forms.TextInput(attrs={"class": "form-control", "readonly": "readonly", "tabindex": "-1"}),
     )
 
     # ------------------------------------------------------------------ #
@@ -89,16 +100,16 @@ class IpsecTunnelForm(forms.Form):
     crypto_map_name = forms.CharField(
         label="Crypto Map Name",
         max_length=64,
-        initial="CRYPTO-MAP",
+        initial="VPN",
         widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "CRYPTO-MAP"}),
     )
 
     crypto_map_sequence = forms.IntegerField(
         label="Crypto Map Sequence",
-        min_value=1,
-        max_value=65535,
-        initial=10,
-        help_text="Sequence number within the crypto map (lower numbers evaluated first).",
+        min_value=2000,
+        max_value=2999,
+        initial=2000,
+        help_text="Sequence number (2000-2999 for manual tunnels). Portal uses 3000+.",
         widget=forms.NumberInput(attrs={"class": "form-control"}),
     )
 
@@ -158,33 +169,33 @@ class IpsecTunnelForm(forms.Form):
     ikev2_proposal_name = forms.CharField(
         label="IKEv2 Proposal Name",
         max_length=64,
-        initial="IKEv2-PROPOSAL",
+        initial="",
         required=False,
-        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "IKEv2-PROPOSAL"}),
+        widget=forms.TextInput(attrs={"class": "form-control", "readonly": "readonly", "tabindex": "-1"}),
     )
 
     ikev2_policy_name = forms.CharField(
         label="IKEv2 Policy Name",
         max_length=64,
-        initial="IKEv2-POLICY",
+        initial="",
         required=False,
-        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "IKEv2-POLICY"}),
+        widget=forms.TextInput(attrs={"class": "form-control", "readonly": "readonly", "tabindex": "-1"}),
     )
 
     ikev2_keyring_name = forms.CharField(
         label="IKEv2 Keyring Name",
         max_length=64,
-        initial="IKEv2-KEYRING",
+        initial="",
         required=False,
-        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "IKEv2-KEYRING"}),
+        widget=forms.TextInput(attrs={"class": "form-control", "readonly": "readonly", "tabindex": "-1"}),
     )
 
     ikev2_profile_name = forms.CharField(
         label="IKEv2 Profile Name",
         max_length=64,
-        initial="IKEv2-PROFILE",
+        initial="",
         required=False,
-        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "IKEv2-PROFILE"}),
+        widget=forms.TextInput(attrs={"class": "form-control", "readonly": "readonly", "tabindex": "-1"}),
     )
 
     ikev2_encryption = forms.ChoiceField(
@@ -223,8 +234,9 @@ class IpsecTunnelForm(forms.Form):
     ipsec_transform_set_name = forms.CharField(
         label="IPsec Transform-Set Name",
         max_length=64,
-        initial="IPSEC-TS",
-        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "IPSEC-TS"}),
+        initial="",
+        required=False,
+        widget=forms.TextInput(attrs={"class": "form-control", "readonly": "readonly", "tabindex": "-1"}),
     )
 
     ipsec_encryption = forms.ChoiceField(
@@ -255,6 +267,15 @@ class IpsecTunnelForm(forms.Form):
     # Validation                                                           #
     # ------------------------------------------------------------------ #
 
+    def clean_member_name(self):
+        """Validate that member_name is a valid slug (lowercase, hyphens)."""
+        import re  # pylint: disable=import-outside-toplevel
+
+        value = self.cleaned_data.get("member_name", "")
+        if not re.match(r"^[a-z0-9]+(?:-[a-z0-9]+)*$", value):
+            raise forms.ValidationError("Must be lowercase letters, numbers, and hyphens only (e.g. 'acme-corp').")
+        return value
+
     def _validate_cidr_network(self, field_name):
         value = self.cleaned_data.get(field_name, "")
         if not value:
@@ -274,10 +295,41 @@ class IpsecTunnelForm(forms.Form):
         return self._validate_cidr_network("remote_network")
 
     def clean(self):
-        """Cross-field validation for IKE version compatibility and IPsec encryption/integrity rules."""
+        """Cross-field validation, IKE version rules, and member-name-based naming."""
         cleaned = super().clean()
         version = cleaned.get("ike_version", "ikev2")
         dh_group = cleaned.get("ike_dh_group", "")
+        member = cleaned.get("member_name", "")
+        seq = cleaned.get("crypto_map_sequence", "")
+
+        # Auto-populate naming fields from member_name + sequence
+        if member and seq:
+            suffix = f"{member}-{seq}"
+            generated = {
+                "crypto_acl_name": f"VPN-ACL-{suffix}",
+                "ipsec_transform_set_name": f"IPSEC-TS-{suffix}",
+            }
+            if version == "ikev2":
+                generated.update(
+                    {
+                        "ikev2_proposal_name": f"IKEv2-PROP-{suffix}",
+                        "ikev2_policy_name": f"IKEv2-POL-{suffix}",
+                        "ikev2_keyring_name": f"IKEv2-KR-{suffix}",
+                        "ikev2_profile_name": f"IKEv2-PROF-{suffix}",
+                    }
+                )
+
+            # Validate generated names fit IOS-XE 64-byte limit
+            for field_name, value in generated.items():
+                if len(value) > 64:
+                    self.add_error(
+                        "member_name",
+                        f"Member name too long: generated '{field_name}' would be {len(value)} chars (max 64). "
+                        "Use a shorter member name.",
+                    )
+                    break
+
+            cleaned.update(generated)
 
         # IKEv2 rejects legacy DH groups
         if version == "ikev2" and dh_group in ("2", "5"):

@@ -1,0 +1,66 @@
+---
+# Overlay: adds a fake Cisco IOS-XE SSH target for integration testing.
+#
+# Use via invoke:
+#   invoke build --fake-cisco   # build both nautobot and fake-cisco images
+#   invoke start --fake-cisco   # start full stack including fake-cisco
+#   invoke stop                 # stops everything (fake-cisco included)
+#
+# After starting:
+#   SSH target inside Docker network:  fake-cisco:22
+#   SSH target from your Mac:          localhost:2222
+#   Watch received commands:           docker logs -f fake-cisco
+#   Dump commands file:                docker exec fake-cisco cat /output/commands.txt
+#
+# The same fake-cisco-output volume is also mounted read-only into the
+# nautobot container at /fake-cisco-output so that in-container integration
+# tests (nautobot_custom_tunnel_builder/tests/test_integration_ssh.py) can
+# read back what fake-cisco received without shelling out to `docker exec`
+# (the nautobot container has no docker CLI/socket for docker-in-docker).
+
+services:
+  fake-cisco:
+    build:
+      context: "./fake-cisco"
+      dockerfile: "Dockerfile"
+    container_name: "fake-cisco"
+    ports:
+      - "2222:22"
+    volumes:
+      - "fake-cisco-output:/output"
+    restart: unless-stopped
+    networks:
+      default:
+        ipv4_address: 172.18.0.100
+
+  # Inject dev bypass into nautobot + worker so 1Password is not required.
+  # Both services share the dev-psk volume so the PSK file written by the web
+  # container is readable by the worker container.
+  nautobot:
+    environment:
+      OP_DEV_BYPASS: "true"
+    volumes:
+      - "dev-psk:/tmp/nautobot-dev-psk"
+      - "fake-cisco-output:/fake-cisco-output:ro"
+
+  worker:
+    environment:
+      OP_DEV_BYPASS: "true"
+    volumes:
+      - "dev-psk:/tmp/nautobot-dev-psk"
+
+volumes:
+  fake-cisco-output:
+    driver: local
+  dev-psk:
+    driver: local
+
+# Pin the subnet so fake-cisco always gets 172.18.0.100 (the "fake-cisco"
+# device's primary IP in Nautobot). Without this, Docker assigns IPs
+# dynamically and they shift on every restart.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: "172.18.0.0/16"
+          gateway: "172.18.0.1"

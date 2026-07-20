@@ -87,3 +87,23 @@ class PushConfigToDeviceTest(TestCase):
             push_config_to_device(self.device_params, self.commands, self.logger)
 
         self.assertIn("Connection refused", str(ctx.exception))
+
+    @patch("nautobot_custom_tunnel_builder.jobs.ConnectHandler")
+    def test_psk_redacted_in_output_log(self, mock_connect):
+        """PSK is replaced with ***REDACTED*** in the logged device output."""
+        psk = "SuperSecretPSK123!"
+        mock_conn = MagicMock()
+        mock_connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_connect.return_value.__exit__ = MagicMock(return_value=False)
+        mock_conn.send_config_set.return_value = (
+            f"crypto isakmp key {psk} address 203.0.113.1\n"
+            f"  pre-shared-key local {psk}\n"
+            "crypto map VPN 3000 ipsec-isakmp\n"
+        )
+
+        with self.assertLogs("test", level="INFO") as log_ctx:
+            push_config_to_device(self.device_params, self.commands, self.logger, psk=psk)
+
+        full_log = "\n".join(log_ctx.output)
+        self.assertNotIn(psk, full_log, "PSK must not appear in any log output")
+        self.assertIn("***REDACTED***", full_log)

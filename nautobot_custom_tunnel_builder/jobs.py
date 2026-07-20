@@ -9,6 +9,7 @@ import traceback
 from nautobot.apps.jobs import ChoiceVar, IntegerVar, Job, ObjectVar, StringVar, register_jobs
 from nautobot.dcim.models import Device
 from nautobot.extras.models import Status
+from nautobot.ipam.models import IPAddressToInterface
 from nautobot.vpn.models import VPNTunnel
 from netmiko import ConnectHandler
 
@@ -44,13 +45,14 @@ class IosXeConfigError(Exception):
 # ---------------------------------------------------------------------------
 
 
-def push_config_to_device(device_params: dict, commands: list[str], push_logger) -> str:
+def push_config_to_device(device_params: dict, commands: list[str], push_logger, psk: str = "") -> str:
     """Push configuration commands to a device via SSH and save config.
 
     Args:
         device_params: Netmiko connection parameters dict.
         commands: List of IOS-XE configuration commands.
         push_logger: Logger instance for status messages.
+        psk: Pre-shared key to redact from device output logs.
 
     Returns:
         Raw output from send_config_set.
@@ -64,7 +66,8 @@ def push_config_to_device(device_params: dict, commands: list[str], push_logger)
 
         push_logger.info("Connected. Pushing %d commands.", len(commands))
         output = conn.send_config_set(commands, cmd_verify=False)
-        push_logger.info("Configuration output:\n%s", output)
+        safe_output = output.replace(psk, "***REDACTED***") if psk else output
+        push_logger.info("Configuration output:\n%s", safe_output)
 
         errors = _IOSXE_ERROR_PATTERN.findall(output)
         if errors:
@@ -108,6 +111,7 @@ def _build_ikev1_commands(data: dict) -> list[str]:
         " authentication pre-share",
         f" group {data['ike_dh_group']}",
         f" lifetime {data['ike_lifetime']}",
+        "exit",
         f"crypto isakmp key {psk} address {remote_peer}",
     ]
 
@@ -123,19 +127,20 @@ def _build_ikev2_commands(data: dict) -> list[str]:
         f" encryption {data['ikev2_encryption']}",
         f" integrity {data['ikev2_integrity']}",
         f" group {data['ike_dh_group']}",
-        f"crypto ikev2 policy {data['ikev2_policy_name']}",
-        f" proposal {data['ikev2_proposal_name']}",
+        "exit",
         f"crypto ikev2 keyring {data['ikev2_keyring_name']}",
         f" peer {peer_name}",
         f"  address {remote_peer}",
-        f"  pre-shared-key local {psk}",
-        f"  pre-shared-key remote {psk}",
+        f"  pre-shared-key {psk}",
+        " exit",
+        "exit",
         f"crypto ikev2 profile {data['ikev2_profile_name']}",
         f" match identity remote address {remote_peer} 255.255.255.255",
         " authentication local pre-share",
         " authentication remote pre-share",
         f" keyring local {data['ikev2_keyring_name']}",
         f" lifetime {data['ike_lifetime']}",
+        "exit",
     ]
 
 
@@ -172,6 +177,7 @@ def build_iosxe_policy_config(data: dict) -> list[str]:
     # Crypto ACL (interesting traffic)
     commands.append(f"ip access-list extended {acl_name}")
     commands.append(f" permit ip {local_net} {local_wildcard} {remote_net} {remote_wildcard}")
+    commands.append("exit")
 
     # IPsec Transform-Set (Phase 2)
     if ipsec_integ:
@@ -180,6 +186,7 @@ def build_iosxe_policy_config(data: dict) -> list[str]:
         # GCM — no separate integrity algorithm
         commands.append(f"crypto ipsec transform-set {ts_name} {ipsec_enc}")
     commands.append(" mode tunnel")
+    commands.append("exit")
 
     # Crypto Map
     commands.append(f"crypto map {map_name} {map_seq} ipsec-isakmp")
@@ -189,6 +196,7 @@ def build_iosxe_policy_config(data: dict) -> list[str]:
     if ike_version == "ikev2":
         commands.append(f" set ikev2-profile {data['ikev2_profile_name']}")
     commands.append(f" match address {acl_name}")
+    commands.append("exit")
 
     return commands
 
@@ -518,7 +526,7 @@ class BuildIpsecTunnel(Job):
         }
 
         try:
-            push_config_to_device(device_params, commands, self.logger)
+            push_config_to_device(device_params, commands, self.logger, psk=pre_shared_key)
         except Exception as exc:
             self.logger.error(
                 "Failed to configure %s: %s\n%s",
@@ -563,12 +571,6 @@ class PortalBuildIpsecTunnel(Job):
         max_length=36,
     )
 
-    pre_shared_key = StringVar(
-        label="Pre-Shared Key",
-        description="IKE pre-shared key (sensitive).",
-        max_length=128,
-    )
-
     # ------------------------------------------------------------------ #
     # Helpers                                                              #
     # ------------------------------------------------------------------ #
@@ -600,7 +602,7 @@ class PortalBuildIpsecTunnel(Job):
     # Main run method                                                      #
     # ------------------------------------------------------------------ #
 
-    def run(self, tunnel_id, pre_shared_key):  # pylint: disable=arguments-differ,too-many-locals,too-many-statements
+    def run(self, tunnel_id):  # pylint: disable=arguments-differ,too-many-locals,too-many-statements
         """Execute the portal-requested IPsec tunnel build."""
         # 1. Load VPNTunnel and extract parameters from custom fields
         try:
@@ -609,9 +611,10 @@ class PortalBuildIpsecTunnel(Job):
             self.logger.error("VPNTunnel with id '%s' not found.", tunnel_id)
             raise
 
-        # Get hub and spoke endpoints
-        hub_endpoint = tunnel.endpoint_a
-        spoke_endpoint = tunnel.endpoint_z
+        # Get hub and spoke endpoints.
+        # Convention: endpoint_z = hub (NRTC concentrator), endpoint_a = spoke (member).
+        hub_endpoint = tunnel.endpoint_z
+        spoke_endpoint = tunnel.endpoint_a
 
         if not hub_endpoint or not hub_endpoint.source_ipaddress:
             self.logger.error("No hub endpoint with source IP found on tunnel '%s'.", tunnel.name)
@@ -620,8 +623,20 @@ class PortalBuildIpsecTunnel(Job):
             self.logger.error("No spoke endpoint with source IP found on tunnel '%s'.", tunnel.name)
             raise ValueError(f"Tunnel '{tunnel.name}' has no spoke endpoint with a source IP address.")
 
-        # Resolve device from hub endpoint
-        device = hub_endpoint.source_ipaddress.assigned_object.parent
+        # Resolve device from hub endpoint.
+        # Prefer the direct device FK (set when the endpoint is pre-configured or
+        # created by the portal). Fall back to IPAddressToInterface for older records.
+        if hub_endpoint.device:
+            device = hub_endpoint.device
+        else:
+            assignment = IPAddressToInterface.objects.filter(
+                ip_address=hub_endpoint.source_ipaddress
+            ).first()
+            if not assignment:
+                raise ValueError(
+                    f"Hub IP on tunnel '{tunnel.name}' is not assigned to any interface."
+                )
+            device = assignment.interface.device
         self.logger.info("Device resolved: %s", device.name)
 
         # Read parameters from native objects
@@ -661,8 +676,20 @@ class PortalBuildIpsecTunnel(Job):
             protected_network_cidr,
         )
 
-        # 2. Map VPN profile to config params
-        params = profile_to_config_params(
+        # 2. Retrieve PSK from the tunnel's SecretsGroup (stored in 1Password)
+        if not vpn_profile.secrets_group:
+            raise ValueError(f"Tunnel '{tunnel.name}' has no secrets group configured.")
+        secret = vpn_profile.secrets_group.secrets.first()
+        if not secret:
+            raise ValueError(f"Tunnel '{tunnel.name}' secrets group has no secrets.")
+        try:
+            pre_shared_key = secret.get_value()
+        except Exception:
+            self.logger.exception("Failed to retrieve PSK for tunnel '%s'.", tunnel.name)
+            raise
+
+        # 3. Map VPN profile to config params
+        params = profile_to_config_params(  # pylint: disable=duplicate-code
             vpn_profile=vpn_profile,
             remote_peer_ip=remote_peer_ip,
             local_network_cidr=local_network_cidr,
@@ -672,7 +699,7 @@ class PortalBuildIpsecTunnel(Job):
         )
         params["pre_shared_key"] = pre_shared_key
 
-        # 3. Build IOS-XE configuration commands
+        # 4. Build IOS-XE configuration commands
         commands = build_iosxe_policy_config(params)
 
         self.logger.info(
@@ -703,7 +730,7 @@ class PortalBuildIpsecTunnel(Job):
         }
 
         try:
-            push_config_to_device(device_params, commands, self.logger)
+            push_config_to_device(device_params, commands, self.logger, psk=pre_shared_key)
         except Exception as exc:
             self.logger.error(
                 "Failed to configure %s for tunnel '%s': %s\n%s",
@@ -712,10 +739,11 @@ class PortalBuildIpsecTunnel(Job):
                 exc,
                 traceback.format_exc(),
             )
-            # Set tunnel status to Decommissioning (closest to "failed")
-            decommissioning = Status.objects.get_for_model(VPNTunnel).get(name="Decommissioning")
-            tunnel.status = decommissioning
-            tunnel.save()
+            # Set tunnel status to Decommissioning (closest to "failed") if available
+            decommissioning = Status.objects.get_for_model(VPNTunnel).filter(name="Decommissioning").first()
+            if decommissioning:
+                tunnel.status = decommissioning
+                tunnel.save()
             raise
 
         # 5. Update tunnel status to Active on success

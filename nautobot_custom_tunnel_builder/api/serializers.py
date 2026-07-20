@@ -60,14 +60,15 @@ class PortalTunnelRequestSerializer(serializers.Serializer):  # pylint: disable=
         help_text="Public IP address of the member's VPN endpoint.",
     )
 
-    hub_protected_prefix = serializers.CharField(
-        max_length=18,
-        help_text="Our protected network in CIDR notation (e.g. 10.100.0.0/24).",
+    member_protected_prefixes = serializers.ListField(
+        child=serializers.CharField(max_length=18),
+        allow_empty=False,
+        help_text="Member's protected networks in CIDR notation (e.g. ['192.168.1.0/24', '10.0.0.0/8']).",
     )
 
-    member_protected_prefix = serializers.CharField(
-        max_length=18,
-        help_text="Member's protected network in CIDR notation (e.g. 192.168.1.0/24).",
+    member_connect_request_id = serializers.CharField(
+        max_length=64,
+        help_text="Member Connect portal VpnRequest UUID — cross-system idempotency key stamped on the tunnel.",
     )
 
     def validate_member_name(self, value):
@@ -85,13 +86,9 @@ class PortalTunnelRequestSerializer(serializers.Serializer):  # pylint: disable=
             raise serializers.ValidationError("Enter a two-letter state abbreviation (e.g. 'MS').")
         return value
 
-    def validate_hub_protected_prefix(self, value):
-        """Validate hub protected prefix is a valid IPv4 CIDR."""
-        return _validate_cidr(value, "hub protected prefix")
-
-    def validate_member_protected_prefix(self, value):
-        """Validate member protected prefix is a valid IPv4 CIDR."""
-        return _validate_cidr(value, "member protected prefix")
+    def validate_member_protected_prefixes(self, value):
+        """Validate each entry is a valid IPv4 CIDR."""
+        return [_validate_cidr(v, "member protected prefix") for v in value]
 
     def validate_device(self, value):
         """Ensure the device has a primary IP for SSH connectivity."""

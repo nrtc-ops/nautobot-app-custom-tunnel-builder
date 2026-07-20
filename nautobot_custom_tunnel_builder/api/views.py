@@ -3,7 +3,7 @@
 import logging
 import secrets
 
-from django.db import transaction
+from django.db import connection, transaction
 from nautobot.core.api.authentication import TokenAuthentication
 from nautobot.dcim.models import Device, DeviceType, Interface, Manufacturer
 from nautobot.extras.models import Job as JobModel
@@ -24,7 +24,7 @@ from rest_framework.response import Response
 from rest_framework.reverse import reverse
 from rest_framework.views import APIView
 
-from ..onepassword_utils import store_psk_in_1password
+from ..onepassword_utils import get_secret_provider_params, store_psk_in_1password
 from .serializers import PortalTunnelRequestSerializer
 
 logger = logging.getLogger(__name__)
@@ -36,12 +36,15 @@ def _location_slug(city, state):
 
 
 def _get_or_create_member_device(member_name, location_slug, remote_peer_ip, location_obj):  # pylint: disable=too-many-locals
-    """Create or retrieve the member placeholder Device with dummy0 interface and IP."""
+    """Create or retrieve the member placeholder Device with a per-peer interface and IP."""
     manufacturer, _ = Manufacturer.objects.get_or_create(
         name="Generic",
         defaults={"description": "Generic/virtual manufacturer for placeholder devices."},
     )
-    device_type = DeviceType.objects.get(model="Member VPN Endpoint", manufacturer=manufacturer)
+    device_type, _ = DeviceType.objects.get_or_create(
+        model="Member VPN Endpoint",
+        manufacturer=manufacturer,
+    )
     role, _ = Role.objects.get_or_create(name="Member")
 
     device_name = f"member-{member_name}-{location_slug}"
@@ -58,9 +61,10 @@ def _get_or_create_member_device(member_name, location_slug, remote_peer_ip, loc
     )
 
     intf_status = Status.objects.get_for_model(Interface).get(name="Active")
+    interface_name = f"peer-{remote_peer_ip.replace('.', '-')}"
     interface, _ = Interface.objects.get_or_create(
         device=device,
-        name="dummy0",
+        name=interface_name,
         defaults={"type": "virtual", "status": intf_status},
     )
 
@@ -104,7 +108,7 @@ def _get_or_create_location(city, state):
     from nautobot.dcim.models import Location, LocationType  # pylint: disable=import-outside-toplevel
 
     loc_name = f"{city}, {state.upper()}"
-    location_type = LocationType.objects.get(name="Site")
+    location_type, _ = LocationType.objects.get_or_create(name="Site")
 
     location, _ = Location.objects.get_or_create(
         name=loc_name,
@@ -116,7 +120,7 @@ def _get_or_create_location(city, state):
     return location
 
 
-def _clone_vpn_profile(template, name, sequence, psk_token):
+def _clone_vpn_profile(template, name, sequence):
     """Clone a template VPNProfile into a per-tunnel profile with custom fields."""
     profile = VPNProfile.objects.create(
         name=name,
@@ -146,11 +150,37 @@ def _clone_vpn_profile(template, name, sequence, psk_token):
 
     # Set custom fields
     profile._custom_field_data["custom_tunnel_builder_crypto_map_sequence"] = sequence  # pylint: disable=protected-access
-    profile._custom_field_data["custom_tunnel_builder_psk_retrieval_token"] = psk_token  # pylint: disable=protected-access
-    profile._custom_field_data["custom_tunnel_builder_psk_retrieved"] = False  # pylint: disable=protected-access
     profile.save()
 
     return profile
+
+
+SEQUENCE_FLOOR = 3000
+SEQUENCE_STEP = 10
+
+
+def _allocate_crypto_map_sequence(device):
+    """Return the next crypto map sequence (>= 3000, step 10) for a hub device.
+
+    Must be called inside transaction.atomic(). On PostgreSQL a
+    transaction-scoped advisory lock keyed on the device pk serializes
+    concurrent allocations so two first-tunnel requests cannot both compute
+    3000. Sequences below the floor (legacy manual crypto map entries) are
+    ignored so they cannot drag next_seq down into colliding values.
+    """
+    if connection.vendor == "postgresql":
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", [str(device.pk)])
+    existing_tunnels = VPNTunnel.objects.filter(endpoint_z__device=device).select_related("vpn_profile")
+    sequences = [
+        t.vpn_profile._custom_field_data.get("custom_tunnel_builder_crypto_map_sequence")  # pylint: disable=protected-access
+        for t in existing_tunnels
+        if t.vpn_profile
+    ]
+    portal_sequences = [s for s in sequences if isinstance(s, int) and s >= SEQUENCE_FLOOR]
+    if portal_sequences:
+        return max(portal_sequences) + SEQUENCE_STEP
+    return SEQUENCE_FLOOR
 
 
 def _get_or_create_prefix(cidr):
@@ -175,7 +205,7 @@ class PortalTunnelRequestView(APIView):
     authentication_classes = [TokenAuthentication, SessionAuthentication]
     permission_classes = [IsAuthenticated]
 
-    def post(self, request):  # pylint: disable=too-many-locals
+    def post(self, request):  # pylint: disable=too-many-locals,too-many-return-statements
         """Validate, create VPN object hierarchy, enqueue build job, return 202."""
         serializer = PortalTunnelRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -188,55 +218,109 @@ class PortalTunnelRequestView(APIView):
         member_display = data["member_display_name"]
         city = data["location_city"]
         state = data["location_state"]
-        hub_prefix_cidr = data["hub_protected_prefix"]
-        member_prefix_cidr = data["member_protected_prefix"]
+        member_prefix_cidrs = data["member_protected_prefixes"]
+        request_id = data["member_connect_request_id"]
 
         loc_slug = _location_slug(city, state)
         display_location = f"{city}, {state.upper()}"
 
         # -------------------------------------------------------------- #
-        # Duplicate check                                                   #
+        # Serialize check-then-create on the request id: one transaction  #
+        # shared by the dedupe check and hierarchy creation, guarded by a  #
+        # Postgres transaction-scoped advisory lock so two concurrent      #
+        # replays of the same request_id can't both pass the dedupe check. #
         # -------------------------------------------------------------- #
-        vpn_name = f"vpn-nrtc-ms-{member_name}-{loc_slug}-001"
-        existing_vpn = VPN.objects.filter(vpn_id=vpn_name).first()
-        if existing_vpn:
-            # Check for duplicate: any tunnel under this VPN with a spoke endpoint
-            # matching the remote peer IP
-            for tun in existing_vpn.vpn_tunnels.all():
-                spoke = tun.endpoint_z
-                if spoke and spoke.source_ipaddress and str(spoke.source_ipaddress.address.ip) == remote_peer_ip:
-                    return Response(
-                        {
-                            "detail": "A tunnel with these parameters already exists.",
-                            "tunnel_id": str(tun.pk),
-                        },
-                        status=status.HTTP_409_CONFLICT,
+        with transaction.atomic():
+            if connection.vendor == "postgresql":
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                        [f"member-connect-request/{request_id}"],
                     )
 
-        # -------------------------------------------------------------- #
-        # Create full object hierarchy inside a transaction                 #
-        # -------------------------------------------------------------- #
-        try:
-            tunnel, vpn, psk, psk_token = self._create_tunnel_hierarchy(
-                device,
-                template,
-                member_name,
-                member_display,
-                city,
-                state,
-                loc_slug,
-                display_location,
-                remote_peer_ip,
-                hub_prefix_cidr,
-                member_prefix_cidr,
-                vpn_name,
-            )
-        except Exception:  # pylint: disable=broad-exception-caught
-            logger.exception("Failed to create tunnel for member '%s'.", member_name)
-            return Response(
-                {"detail": "Failed to create tunnel. Contact an administrator."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            # ---------------------------------------------------------- #
+            # Idempotency: a replayed portal request returns the original #
+            # tunnel. Checked before every other gate.                    #
+            # ---------------------------------------------------------- #
+            existing_tunnel = VPNTunnel.objects.filter(_custom_field_data__member_connect_request_id=request_id).first()
+            if existing_tunnel:
+                return Response(
+                    {
+                        "detail": "A tunnel for this member_connect_request_id already exists.",
+                        "tunnel_id": str(existing_tunnel.pk),
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            # ---------------------------------------------------------- #
+            # Hub endpoint pre-check. The hub protected prefix comes from  #
+            # the pre-configured hub VPNTunnelEndpoint, never the request. #
+            # ---------------------------------------------------------- #
+            hub_endpoint = VPNTunnelEndpoint.objects.filter(device=device, role__name="Hub").first()
+            if hub_endpoint is None:
+                return Response(
+                    {
+                        "device": [
+                            f"Device '{device.name}' has no pre-configured hub VPN tunnel endpoint "
+                            "(role 'Hub'). An administrator must create one with a protected prefix "
+                            "before tunnels can be requested."
+                        ]
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not hub_endpoint.protected_prefixes.exists():
+                return Response(
+                    {
+                        "device": [
+                            f"The hub endpoint on device '{device.name}' has no protected prefix. "
+                            "An administrator must add one before tunnels can be requested."
+                        ]
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # ---------------------------------------------------------- #
+            # Duplicate check (same member+location VPN, same remote peer) #
+            # ---------------------------------------------------------- #
+            vpn_name = f"vpn-nrtc-ms-{member_name}-{loc_slug}-001"
+            existing_vpn = VPN.objects.filter(vpn_id=vpn_name).first()
+            if existing_vpn:
+                for tun in existing_vpn.vpn_tunnels.all():
+                    spoke = tun.endpoint_a
+                    if spoke and spoke.source_ipaddress and str(spoke.source_ipaddress.address.ip) == remote_peer_ip:
+                        return Response(
+                            {
+                                "detail": "A tunnel with these parameters already exists.",
+                                "tunnel_id": str(tun.pk),
+                            },
+                            status=status.HTTP_409_CONFLICT,
+                        )
+
+            # ---------------------------------------------------------- #
+            # Create full object hierarchy (nested savepoint)              #
+            # ---------------------------------------------------------- #
+            try:
+                tunnel, vpn = self._create_tunnel_hierarchy(
+                    device,
+                    template,
+                    member_name,
+                    member_display,
+                    city,
+                    state,
+                    loc_slug,
+                    display_location,
+                    remote_peer_ip,
+                    hub_endpoint,
+                    member_prefix_cidrs,
+                    vpn_name,
+                    request_id,
+                )
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.exception("Failed to create tunnel for member '%s'.", member_name)
+                return Response(
+                    {"detail": "Failed to create tunnel. Contact an administrator."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
 
         # -------------------------------------------------------------- #
         # Enqueue the build job                                            #
@@ -257,18 +341,12 @@ class PortalTunnelRequestView(APIView):
             job_model=job_model,
             user=request.user,
             tunnel_id=str(tunnel.pk),
-            pre_shared_key=psk,
         )
 
         # Build response URLs
         status_url = reverse(
             "plugins-api:nautobot_custom_tunnel_builder-api:tunnel-status",
             kwargs={"tunnel_id": tunnel.pk},
-            request=request,
-        )
-        psk_url = reverse(
-            "plugins-api:nautobot_custom_tunnel_builder-api:psk-retrieval",
-            kwargs={"token": psk_token},
             request=request,
         )
 
@@ -279,7 +357,6 @@ class PortalTunnelRequestView(APIView):
                 "vpn_id": vpn.vpn_id,
                 "job_id": str(job_result.pk),
                 "status_url": status_url,
-                "psk_url": psk_url,
             },
             status=status.HTTP_202_ACCEPTED,
         )
@@ -295,14 +372,18 @@ class PortalTunnelRequestView(APIView):
         loc_slug,
         display_location,
         remote_peer_ip,
-        hub_prefix_cidr,
-        member_prefix_cidr,
+        hub_endpoint,
+        member_prefix_cidrs,
         vpn_name,
+        request_id,
     ):
         """Create the full VPN object hierarchy inside an atomic transaction.
 
+        The tunnel is created with status "Planned"; PortalBuildIpsecTunnel flips
+        it to Active on a successful push, Decommissioning on failure.
+
         Returns:
-            Tuple of (tunnel, vpn, psk, psk_token).
+            Tuple of (tunnel, vpn).
 
         Raises:
             Exception: If any step fails (1Password, DB, etc.), the transaction rolls back.
@@ -311,8 +392,8 @@ class PortalTunnelRequestView(APIView):
             # 1. Location
             location_obj = _get_or_create_location(city, state)
 
-            # 2. Member Device + dummy0 + IP
-            _member_device, member_ip = _get_or_create_member_device(
+            # 2. Member Device + per-peer interface + IP
+            member_device, member_ip = _get_or_create_member_device(
                 member_name,
                 loc_slug,
                 remote_peer_ip,
@@ -327,32 +408,24 @@ class PortalTunnelRequestView(APIView):
                 },
             )
 
-            # 4. Calculate next crypto map sequence for this device
-            existing_tunnels = VPNTunnel.objects.filter(
-                endpoint_a__source_ipaddress=device.primary_ip,
-            ).select_related("vpn_profile")
-            sequences = [
-                t.vpn_profile._custom_field_data.get(  # pylint: disable=protected-access
-                    "custom_tunnel_builder_crypto_map_sequence", 0
-                )
-                for t in existing_tunnels
-                if t.vpn_profile
-            ]
-            max_seq = max(sequences) if sequences else None
-            next_seq = (max_seq + 10) if max_seq else 2000
+            # 4. Allocate the next crypto map sequence (advisory-locked, floor 3000).
+            next_seq = _allocate_crypto_map_sequence(device)
 
-            # 5. Generate PSK and retrieval token
+            # 5. Generate PSK
             psk = secrets.token_urlsafe(32)
-            psk_token = secrets.token_urlsafe(48)
 
-            # 6. Store PSK in 1Password
+            # 6. Store PSK in 1Password.
+            # NOTE: external call inside transaction.atomic() — orphaned items are
+            # identifiable by name pattern vpn-psk-nrtc-ms-{member}-{loc_slug}-{seq}.
+            # TODO: two-phase commit (logged fast-follow).
             op_item_id = store_psk_in_1password(psk, member_name, loc_slug, next_seq)
 
-            # 7. Create Nautobot Secret + SecretsGroup for this tunnel's PSK
+            # 7. Nautobot Secret + SecretsGroup for this tunnel's PSK
+            _secret_provider, _secret_params = get_secret_provider_params(op_item_id)
             tunnel_secret = Secret.objects.create(
                 name=f"vpn-psk-nrtc-ms-{member_name}-{loc_slug}-{next_seq}",
-                provider="one-password",
-                parameters={"item_id": op_item_id, "field": "password"},
+                provider=_secret_provider,
+                parameters=_secret_params,
             )
             tunnel_sg = SecretsGroup.objects.create(
                 name=f"vpn-sg-nrtc-ms-{member_name}-{loc_slug}-{next_seq}",
@@ -361,15 +434,14 @@ class PortalTunnelRequestView(APIView):
 
             # 8. Clone template VPNProfile
             profile_name = f"vpnprofile-nrtc-ms-{member_name}-{loc_slug}-{next_seq}"
-            profile = _clone_vpn_profile(template, profile_name, next_seq, psk_token)
+            profile = _clone_vpn_profile(template, profile_name, next_seq)
             profile.secrets_group = tunnel_sg
             profile.save()
 
-            # 9. Create VPNTunnel
+            # 9. Create VPNTunnel — born Planned.
             tunnel_name = f"{member_display} - {display_location} - {next_seq}"
             tunnel_id_str = f"vpn-tunnel-nrtc-ms-{member_name}-{loc_slug}-{next_seq}"
-            tunnel_status = Status.objects.get_for_model(VPNTunnel).get(name="Active")
-
+            tunnel_status = Status.objects.get_for_model(VPNTunnel).get(name="Planned")
             tunnel = VPNTunnel.objects.create(
                 name=tunnel_name,
                 tunnel_id=tunnel_id_str,
@@ -377,47 +449,26 @@ class PortalTunnelRequestView(APIView):
                 vpn=vpn,
                 vpn_profile=profile,
             )
+            tunnel._custom_field_data["member_connect_request_id"] = request_id  # pylint: disable=protected-access
 
-            # 10. Create Prefix objects
-            hub_prefix = _get_or_create_prefix(hub_prefix_cidr)
-            member_prefix = _get_or_create_prefix(member_prefix_cidr)
+            # 10. Attach the pre-configured hub endpoint (endpoint_z).
+            tunnel.endpoint_z = hub_endpoint
 
-            # 11. Hub VPNTunnelEndpoint (concentrator) — endpoint_a
-            hub_role, _ = Role.objects.get_or_create(name="Hub")
-            hub_endpoint = VPNTunnelEndpoint.objects.create(
-                role=hub_role,
-                source_ipaddress=device.primary_ip,
-            )
-            tunnel.endpoint_a = hub_endpoint
-            tunnel.save()
-            hub_endpoint.protected_prefixes.add(hub_prefix)
-            existing_hub = (
-                VPNTunnelEndpoint.objects.filter(source_ipaddress=device.primary_ip, role=hub_role)
-                .exclude(pk=hub_endpoint.pk)
-                .first()
-            )
-            crypto_map_name = "VPN"
-            if existing_hub:
-                crypto_map_name = (
-                    existing_hub._custom_field_data.get(  # pylint: disable=protected-access
-                        "custom_tunnel_builder_crypto_map_name", "VPN"
-                    )
-                    or "VPN"
-                )
-            hub_endpoint._custom_field_data["custom_tunnel_builder_crypto_map_name"] = crypto_map_name  # pylint: disable=protected-access
-            hub_endpoint.save()
-
-            # 12. Spoke VPNTunnelEndpoint (member) — endpoint_z
+            # 11. Spoke VPNTunnelEndpoint (endpoint_a) — one protected prefix
+            # association per entry in member_protected_prefixes.
             spoke_role, _ = Role.objects.get_or_create(name="Spoke")
             spoke_endpoint = VPNTunnelEndpoint.objects.create(
+                name=f"{member_name}-{loc_slug}",
                 role=spoke_role,
+                device=member_device,
                 source_ipaddress=member_ip,
             )
-            spoke_endpoint.protected_prefixes.add(member_prefix)
-            tunnel.endpoint_z = spoke_endpoint
+            for cidr in member_prefix_cidrs:
+                spoke_endpoint.protected_prefixes.add(_get_or_create_prefix(cidr))
+            tunnel.endpoint_a = spoke_endpoint
             tunnel.save()
 
-        return tunnel, vpn, psk, psk_token
+        return tunnel, vpn
 
 
 class TunnelStatusView(APIView):
@@ -427,7 +478,7 @@ class TunnelStatusView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, tunnel_id):
-        """Return tunnel status, name, and conditional PSK URL."""
+        """Return tunnel status; include the PSK exactly once when Active."""
         try:
             tunnel = VPNTunnel.objects.get(pk=tunnel_id)
         except VPNTunnel.DoesNotExist:
@@ -436,87 +487,33 @@ class TunnelStatusView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        profile = tunnel.vpn_profile
-        response_data = {
+        payload = {
             "tunnel_id": str(tunnel.pk),
             "tunnel_name": tunnel.name,
             "status": tunnel.status.name,
         }
 
-        # Include PSK URL only when active and not yet retrieved
-        if profile:
-            psk_token = profile._custom_field_data.get(  # pylint: disable=protected-access
-                "custom_tunnel_builder_psk_retrieval_token"
-            )
-            psk_retrieved = profile._custom_field_data.get(  # pylint: disable=protected-access
-                "custom_tunnel_builder_psk_retrieved", False
-            )
-            if tunnel.status.name == "Active" and psk_token and not psk_retrieved:
-                response_data["psk_url"] = reverse(
-                    "plugins-api:nautobot_custom_tunnel_builder-api:psk-retrieval",
-                    kwargs={"token": psk_token},
-                    request=request,
+        profile = tunnel.vpn_profile
+        if tunnel.status.name == "Active" and profile is not None:
+            # Guard the one-shot PSK latch with a row lock so two concurrent
+            # GETs on a just-activated tunnel can't both read-check-write past
+            # the "already retrieved" check and both return the PSK.
+            with transaction.atomic():
+                locked_profile = VPNProfile.objects.select_for_update().get(pk=profile.pk)
+                already_retrieved = locked_profile._custom_field_data.get(  # pylint: disable=protected-access
+                    "custom_tunnel_builder_psk_retrieved"
                 )
+                if not already_retrieved:
+                    secret = locked_profile.secrets_group.secrets.first() if locked_profile.secrets_group else None
+                    if secret:
+                        try:
+                            payload["pre_shared_key"] = secret.get_value()
+                        except Exception:  # pylint: disable=broad-exception-caught
+                            logger.exception("Failed to retrieve PSK for tunnel '%s'.", tunnel.name)
+                        else:
+                            locked_profile._custom_field_data[  # pylint: disable=protected-access
+                                "custom_tunnel_builder_psk_retrieved"
+                            ] = True
+                            locked_profile.save(update_fields=["_custom_field_data"])
 
-        return Response(response_data)
-
-
-class PSKRetrievalView(APIView):
-    """One-time PSK retrieval by token. Returns 410 Gone if already retrieved."""
-
-    authentication_classes = [TokenAuthentication, SessionAuthentication]
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, token):
-        """Return the PSK from secrets and mark as retrieved (one-time use)."""
-        # Find the VPNProfile by retrieval token
-        try:
-            profile = VPNProfile.objects.get(
-                _custom_field_data__custom_tunnel_builder_psk_retrieval_token=token,
-            )
-        except VPNProfile.DoesNotExist:
-            return Response(
-                {"detail": "Invalid or expired PSK token."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        cf = profile._custom_field_data  # pylint: disable=protected-access
-
-        if cf.get("custom_tunnel_builder_psk_retrieved", False):
-            return Response(
-                {"detail": "PSK has already been retrieved. This token is no longer valid."},
-                status=status.HTTP_410_GONE,
-            )
-
-        # Retrieve PSK from the secrets group
-        if not profile.secrets_group:
-            return Response(
-                {"detail": "No secrets group configured for this tunnel profile."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-        try:
-            secret = profile.secrets_group.secrets.first()
-            psk = secret.get_value()
-        except Exception:  # pylint: disable=broad-exception-caught
-            logger.exception("Failed to retrieve PSK from secrets backend.")
-            return Response(
-                {"detail": "Failed to retrieve PSK from secrets backend."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-        # Mark as retrieved and clear the token
-        profile._custom_field_data["custom_tunnel_builder_psk_retrieved"] = True  # pylint: disable=protected-access
-        profile._custom_field_data["custom_tunnel_builder_psk_retrieval_token"] = ""  # pylint: disable=protected-access
-        profile.save()
-
-        # Find the associated tunnel for the response
-        tunnel = VPNTunnel.objects.filter(vpn_profile=profile).first()
-
-        return Response(
-            {
-                "tunnel_id": str(tunnel.pk) if tunnel else "",
-                "tunnel_name": tunnel.name if tunnel else "",
-                "pre_shared_key": psk,
-            }
-        )
+        return Response(payload)
