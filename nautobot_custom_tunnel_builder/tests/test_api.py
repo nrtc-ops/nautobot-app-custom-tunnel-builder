@@ -4,7 +4,9 @@ import uuid
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from nautobot.core.testing import APITestCase
 from nautobot.dcim.models import (
     Device,
@@ -624,6 +626,20 @@ class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
         data = second.json()
         self.assertEqual(data["status"], "Active")
         self.assertNotIn("pre_shared_key", data)
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-psk-test")
+    @patch("nautobot.extras.models.Secret.get_value", return_value="TestPSKReturnedOnce!")
+    def test_first_active_poll_locks_profile_row(self, _mock_get_value, _mock_op):
+        """The one-shot PSK latch is serialized with a row lock (SELECT ... FOR UPDATE)."""
+        tunnel_id = self._post_tunnel("psk-lock-member", "203.0.113.81")
+        self._activate(tunnel_id)
+        with CaptureQueriesContext(connection) as ctx:
+            response = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id))
+        self.assertIn("pre_shared_key", response.json())
+        self.assertTrue(
+            any("FOR UPDATE" in q["sql"] for q in ctx.captured_queries),
+            "Expected a SELECT ... FOR UPDATE during the first Active poll",
+        )
 
 
 # ---------------------------------------------------------------------------

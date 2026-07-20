@@ -446,18 +446,27 @@ class TunnelStatusView(APIView):
 
         profile = tunnel.vpn_profile
         if tunnel.status.name == "Active" and profile is not None:
-            already_retrieved = profile._custom_field_data.get(  # pylint: disable=protected-access
-                "custom_tunnel_builder_psk_retrieved"
-            )
-            if not already_retrieved:
-                secret = profile.secrets_group.secrets.first() if profile.secrets_group else None
-                if secret:
-                    try:
-                        payload["pre_shared_key"] = secret.get_value()
-                    except Exception:  # pylint: disable=broad-exception-caught
-                        logger.exception("Failed to retrieve PSK for tunnel '%s'.", tunnel.name)
-                    else:
-                        profile._custom_field_data["custom_tunnel_builder_psk_retrieved"] = True  # pylint: disable=protected-access
-                        profile.save()
+            # Guard the one-shot PSK latch with a row lock so two concurrent
+            # GETs on a just-activated tunnel can't both read-check-write past
+            # the "already retrieved" check and both return the PSK.
+            with transaction.atomic():
+                locked_profile = VPNProfile.objects.select_for_update().get(pk=profile.pk)
+                already_retrieved = locked_profile._custom_field_data.get(  # pylint: disable=protected-access
+                    "custom_tunnel_builder_psk_retrieved"
+                )
+                if not already_retrieved:
+                    secret = (
+                        locked_profile.secrets_group.secrets.first() if locked_profile.secrets_group else None
+                    )
+                    if secret:
+                        try:
+                            payload["pre_shared_key"] = secret.get_value()
+                        except Exception:  # pylint: disable=broad-exception-caught
+                            logger.exception("Failed to retrieve PSK for tunnel '%s'.", tunnel.name)
+                        else:
+                            locked_profile._custom_field_data[  # pylint: disable=protected-access
+                                "custom_tunnel_builder_psk_retrieved"
+                            ] = True
+                            locked_profile.save(update_fields=["_custom_field_data"])
 
         return Response(payload)
