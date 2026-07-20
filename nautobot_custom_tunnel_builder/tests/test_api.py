@@ -557,10 +557,7 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
             response = self._post(PORTAL_REQUEST_URL, payload)
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
         self.assertTrue(
-            any(
-                "pg_advisory_xact_lock" in q["sql"] and str(self.device.pk) in q["sql"]
-                for q in ctx.captured_queries
-            ),
+            any("pg_advisory_xact_lock" in q["sql"] and str(self.device.pk) in q["sql"] for q in ctx.captured_queries),
             "Expected a pg_advisory_xact_lock keyed on the device pk during sequence allocation",
         )
 

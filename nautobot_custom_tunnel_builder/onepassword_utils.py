@@ -24,13 +24,11 @@ def _dev_bypass_enabled():
         return False
     if not settings.DEBUG:
         logger.warning(
-            "OP_DEV_BYPASS is set but settings.DEBUG is False — bypass DISABLED; "
-            "PSKs will be stored in 1Password."
+            "OP_DEV_BYPASS is set but settings.DEBUG is False — bypass DISABLED; " "PSKs will be stored in 1Password."
         )
         return False
     logger.warning(
-        "OP_DEV_BYPASS ACTIVE: PSKs are written to %s instead of 1Password. "
-        "Never enable this in production.",
+        "OP_DEV_BYPASS ACTIVE: PSKs are written to %s instead of 1Password. " "Never enable this in production.",
         _DEV_PSK_DIR,
     )
     return True

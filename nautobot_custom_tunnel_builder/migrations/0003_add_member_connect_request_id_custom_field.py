@@ -21,8 +21,7 @@ def add_member_connect_request_id_cf(apps, schema_editor):
             "label": "Member Connect Request ID",
             "type": "text",
             "description": (
-                "Idempotency key: UUID of the Member Connect portal VpnRequest "
-                "that created this tunnel."
+                "Idempotency key: UUID of the Member Connect portal VpnRequest " "that created this tunnel."
             ),
             "grouping": "Member Connect",
             "weight": 400,

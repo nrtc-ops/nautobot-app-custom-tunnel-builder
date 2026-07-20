@@ -242,9 +242,7 @@ class PortalTunnelRequestView(APIView):
             # Idempotency: a replayed portal request returns the original #
             # tunnel. Checked before every other gate.                    #
             # ---------------------------------------------------------- #
-            existing_tunnel = VPNTunnel.objects.filter(
-                _custom_field_data__member_connect_request_id=request_id
-            ).first()
+            existing_tunnel = VPNTunnel.objects.filter(_custom_field_data__member_connect_request_id=request_id).first()
             if existing_tunnel:
                 return Response(
                     {
@@ -289,11 +287,7 @@ class PortalTunnelRequestView(APIView):
             if existing_vpn:
                 for tun in existing_vpn.vpn_tunnels.all():
                     spoke = tun.endpoint_a
-                    if (
-                        spoke
-                        and spoke.source_ipaddress
-                        and str(spoke.source_ipaddress.address.ip) == remote_peer_ip
-                    ):
+                    if spoke and spoke.source_ipaddress and str(spoke.source_ipaddress.address.ip) == remote_peer_ip:
                         return Response(
                             {
                                 "detail": "A tunnel with these parameters already exists.",
@@ -510,9 +504,7 @@ class TunnelStatusView(APIView):
                     "custom_tunnel_builder_psk_retrieved"
                 )
                 if not already_retrieved:
-                    secret = (
-                        locked_profile.secrets_group.secrets.first() if locked_profile.secrets_group else None
-                    )
+                    secret = locked_profile.secrets_group.secrets.first() if locked_profile.secrets_group else None
                     if secret:
                         try:
                             payload["pre_shared_key"] = secret.get_value()
