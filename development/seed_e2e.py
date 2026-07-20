@@ -11,8 +11,13 @@ Creates (get_or_create throughout — safe to re-run):
   - Hub VPNTunnelEndpoint (device + role "Hub") with protected prefix + crypto map CF
   - "Planned" and "Decommissioning" statuses mapped to VPNTunnel
   - PortalBuildIpsecTunnel Job row enabled (disabled by default on a fresh DB;
-    the portal view's enqueue would otherwise fail with RunJobTaskFailed)
-  - Portal service account "portal-svc" + API token (printed on first run only)
+    the portal view's enqueue would otherwise fail with RunJobTaskFailed). If
+    the Job row hasn't been registered yet (registry not synced), this step
+    prints an actionable error and everything else still gets seeded normally.
+  - Portal service account "portal-svc" + API token (printed on first run only).
+    This account is a Django superuser — deliberate for this local-only
+    harness (see the WARNING it prints) rather than hand-granting scoped
+    ObjectPermissions; do not reuse this pattern in a shared environment.
 """
 
 from django.contrib.auth import get_user_model
@@ -170,10 +175,24 @@ def _seed_portal_build_job():
     # portal view enqueues this job by module_name/job_class_name (same
     # lookup as api/views.py); if it's not enabled, JobResult.enqueue_job()
     # raises RunJobTaskFailed and the tunnel is stuck Planned forever.
-    job = Job.objects.get(
-        module_name="nautobot_custom_tunnel_builder.jobs",
-        job_class_name="PortalBuildIpsecTunnel",
-    )
+    #
+    # The Job row itself is created by Nautobot's job-registry sync (normally
+    # run during migrate/post_upgrade), not by this script. If that sync
+    # hasn't happened yet, .get() would raise Job.DoesNotExist — guard it so
+    # a registry hiccup doesn't abort the rest of the seed (device, profile,
+    # service account/token all still need to get created either way).
+    try:
+        job = Job.objects.get(
+            module_name="nautobot_custom_tunnel_builder.jobs",
+            job_class_name="PortalBuildIpsecTunnel",
+        )
+    except Job.DoesNotExist:
+        print(
+            "  ERROR:            PortalBuildIpsecTunnel Job not registered yet — "
+            "run 'nautobot-server post_upgrade' (or 'poetry run invoke post-upgrade') "
+            "and re-run seed-e2e"
+        )
+        return None
     if not job.enabled:
         job.enabled = True
         job.save()
@@ -185,9 +204,13 @@ def _seed_service_account():
     # (it reads/writes via plain ORM calls, no RBAC-gated queryset), but
     # test-portal-api.sh's device-eligibility precheck and VPN profile
     # discovery hit Nautobot's standard REST API (dcim/devices,
-    # vpn/vpn-profiles), which does enforce object permissions. Superuser
-    # keeps this local dev/test account simple instead of hand-granting
-    # per-model ObjectPermissions.
+    # vpn/vpn-profiles), which does enforce object permissions.
+    #
+    # Production-shaped alternative would be scoped ObjectPermissions (view on
+    # dcim.device / vpn.vpnprofile, add/change on the handful of models the
+    # portal view creates). Superuser is a deliberate shortcut for this local,
+    # throwaway E2E harness only — never do this in a shared environment. The
+    # WARNING below exists so that shortcut is never silent.
     user_model = get_user_model()
     user, _ = user_model.objects.get_or_create(
         username=SERVICE_ACCOUNT,
@@ -197,6 +220,12 @@ def _seed_service_account():
         user.is_superuser = True
         user.is_staff = True
         user.save()
+    # Loud on every run, not just the creation/upgrade transition — a silent
+    # superuser grant is exactly the risk this warning exists to prevent.
+    print(
+        "  WARNING:          portal-svc is a SUPERUSER (dev harness only — "
+        "scope with ObjectPermissions before any shared environment)"
+    )
     token = Token.objects.filter(user=user).first()
     if token is None:
         token = Token.objects.create(user=user, description="member-connect-portal service token")
@@ -216,9 +245,13 @@ def _main():
     print(f"  hub endpoint:     device={device.name} role=Hub prefix={HUB_PROTECTED_PREFIX}")
     _seed_tunnel_statuses()
     print("  statuses:         Planned + Decommissioning mapped to VPNTunnel")
-    job = _seed_portal_build_job()
-    print(f"  job:              {job.name} enabled")
+    # Service account/token before the Job lookup: if the Job registry hasn't
+    # synced yet, _seed_portal_build_job() only prints an error and moves on —
+    # it must not be able to abort the run before the token gets created.
     _seed_service_account()
+    job = _seed_portal_build_job()
+    if job is not None:
+        print(f"  job:              {job.name} enabled")
     print("Done. Use the UUIDs above as HUB_DEVICE_UUID / TEMPLATE_PROFILE_UUID for")
     print("development/test-portal-api.sh and as the portal's nautobot.hub_device_id /")
     print("nautobot.template_vpn_profile_id credentials.")
