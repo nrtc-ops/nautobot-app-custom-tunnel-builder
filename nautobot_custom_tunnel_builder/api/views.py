@@ -36,7 +36,7 @@ def _location_slug(city, state):
 
 
 def _get_or_create_member_device(member_name, location_slug, remote_peer_ip, location_obj):  # pylint: disable=too-many-locals
-    """Create or retrieve the member placeholder Device with dummy0 interface and IP."""
+    """Create or retrieve the member placeholder Device with a per-peer interface and IP."""
     manufacturer, _ = Manufacturer.objects.get_or_create(
         name="Generic",
         defaults={"description": "Generic/virtual manufacturer for placeholder devices."},
@@ -61,9 +61,10 @@ def _get_or_create_member_device(member_name, location_slug, remote_peer_ip, loc
     )
 
     intf_status = Status.objects.get_for_model(Interface).get(name="Active")
+    interface_name = f"peer-{remote_peer_ip.replace('.', '-')}"
     interface, _ = Interface.objects.get_or_create(
         device=device,
-        name="dummy0",
+        name=interface_name,
         defaults={"type": "virtual", "status": intf_status},
     )
 
@@ -176,7 +177,7 @@ class PortalTunnelRequestView(APIView):
     authentication_classes = [TokenAuthentication, SessionAuthentication]
     permission_classes = [IsAuthenticated]
 
-    def post(self, request):  # pylint: disable=too-many-locals
+    def post(self, request):  # pylint: disable=too-many-locals,too-many-return-statements
         """Validate, create VPN object hierarchy, enqueue build job, return 202."""
         serializer = PortalTunnelRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -189,20 +190,44 @@ class PortalTunnelRequestView(APIView):
         member_display = data["member_display_name"]
         city = data["location_city"]
         state = data["location_state"]
-        hub_prefix_cidr = data["hub_protected_prefix"]
-        member_prefix_cidr = data["member_protected_prefix"]
+        member_prefix_cidrs = data["member_protected_prefixes"]
 
         loc_slug = _location_slug(city, state)
         display_location = f"{city}, {state.upper()}"
 
         # -------------------------------------------------------------- #
-        # Duplicate check                                                   #
+        # Hub endpoint pre-check. The hub protected prefix comes from the  #
+        # pre-configured hub VPNTunnelEndpoint, never from the request.    #
+        # -------------------------------------------------------------- #
+        hub_endpoint = VPNTunnelEndpoint.objects.filter(device=device, role__name="Hub").first()
+        if hub_endpoint is None:
+            return Response(
+                {
+                    "device": [
+                        f"Device '{device.name}' has no pre-configured hub VPN tunnel endpoint "
+                        "(role 'Hub'). An administrator must create one with a protected prefix "
+                        "before tunnels can be requested."
+                    ]
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not hub_endpoint.protected_prefixes.exists():
+            return Response(
+                {
+                    "device": [
+                        f"The hub endpoint on device '{device.name}' has no protected prefix. "
+                        "An administrator must add one before tunnels can be requested."
+                    ]
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # -------------------------------------------------------------- #
+        # Duplicate check (same member+location VPN, same remote peer)     #
         # -------------------------------------------------------------- #
         vpn_name = f"vpn-nrtc-ms-{member_name}-{loc_slug}-001"
         existing_vpn = VPN.objects.filter(vpn_id=vpn_name).first()
         if existing_vpn:
-            # Check for duplicate: any tunnel under this VPN with a spoke endpoint
-            # matching the remote peer IP
             for tun in existing_vpn.vpn_tunnels.all():
                 spoke = tun.endpoint_a
                 if spoke and spoke.source_ipaddress and str(spoke.source_ipaddress.address.ip) == remote_peer_ip:
@@ -215,7 +240,7 @@ class PortalTunnelRequestView(APIView):
                     )
 
         # -------------------------------------------------------------- #
-        # Create full object hierarchy inside a transaction                 #
+        # Create full object hierarchy inside a transaction                #
         # -------------------------------------------------------------- #
         try:
             tunnel, vpn = self._create_tunnel_hierarchy(
@@ -228,8 +253,8 @@ class PortalTunnelRequestView(APIView):
                 loc_slug,
                 display_location,
                 remote_peer_ip,
-                hub_prefix_cidr,
-                member_prefix_cidr,
+                hub_endpoint,
+                member_prefix_cidrs,
                 vpn_name,
             )
         except Exception:  # pylint: disable=broad-exception-caught
@@ -289,11 +314,14 @@ class PortalTunnelRequestView(APIView):
         loc_slug,
         display_location,
         remote_peer_ip,
-        hub_prefix_cidr,
-        member_prefix_cidr,
+        hub_endpoint,
+        member_prefix_cidrs,
         vpn_name,
     ):
         """Create the full VPN object hierarchy inside an atomic transaction.
+
+        The tunnel is created with status "Planned"; PortalBuildIpsecTunnel flips
+        it to Active on a successful push, Decommissioning on failure.
 
         Returns:
             Tuple of (tunnel, vpn).
@@ -305,8 +333,7 @@ class PortalTunnelRequestView(APIView):
             # 1. Location
             location_obj = _get_or_create_location(city, state)
 
-            # 2. Member Device + dummy0 + IP
-
+            # 2. Member Device + per-peer interface + IP
             member_device, member_ip = _get_or_create_member_device(
                 member_name,
                 loc_slug,
@@ -323,10 +350,6 @@ class PortalTunnelRequestView(APIView):
             )
 
             # 4. Calculate next crypto map sequence for this device.
-            # select_for_update() locks matching rows to prevent concurrent requests
-            # from computing the same sequence number.
-            # Filter by the hub device itself (not by IP) so the lookup works
-            # regardless of which IP is on the hub endpoint.
             existing_tunnels = VPNTunnel.objects.select_for_update(of=("self",)).filter(
                 endpoint_z__device=device,
             ).select_related("vpn_profile")
@@ -344,15 +367,12 @@ class PortalTunnelRequestView(APIView):
             psk = secrets.token_urlsafe(32)
 
             # 6. Store PSK in 1Password.
-            # NOTE: This external call is inside transaction.atomic(). If a DB step after
-            # this line raises, the transaction rolls back but the 1Password item is already
-            # created (orphaned). Orphaned items can be identified by name pattern:
-            # vpn-psk-nrtc-ms-{member}-{loc_slug}-{seq}
-            # TODO: Move 1Password call outside the transaction (two-phase: commit DB first,
-            # then create 1Password item and update Secret.parameters in a second transaction).
+            # NOTE: external call inside transaction.atomic() — orphaned items are
+            # identifiable by name pattern vpn-psk-nrtc-ms-{member}-{loc_slug}-{seq}.
+            # TODO: two-phase commit (logged fast-follow).
             op_item_id = store_psk_in_1password(psk, member_name, loc_slug, next_seq)
 
-            # 7. Create Nautobot Secret + SecretsGroup for this tunnel's PSK
+            # 7. Nautobot Secret + SecretsGroup for this tunnel's PSK
             _secret_provider, _secret_params = get_secret_provider_params(op_item_id)
             tunnel_secret = Secret.objects.create(
                 name=f"vpn-psk-nrtc-ms-{member_name}-{loc_slug}-{next_seq}",
@@ -370,11 +390,10 @@ class PortalTunnelRequestView(APIView):
             profile.secrets_group = tunnel_sg
             profile.save()
 
-            # 9. Create VPNTunnel
+            # 9. Create VPNTunnel — born Planned.
             tunnel_name = f"{member_display} - {display_location} - {next_seq}"
             tunnel_id_str = f"vpn-tunnel-nrtc-ms-{member_name}-{loc_slug}-{next_seq}"
-            tunnel_status = Status.objects.get_for_model(VPNTunnel).get(name="Active")
-
+            tunnel_status = Status.objects.get_for_model(VPNTunnel).get(name="Planned")
             tunnel = VPNTunnel.objects.create(
                 name=tunnel_name,
                 tunnel_id=tunnel_id_str,
@@ -383,31 +402,11 @@ class PortalTunnelRequestView(APIView):
                 vpn_profile=profile,
             )
 
-            # 10. Create Prefix objects
-            hub_prefix = _get_or_create_prefix(hub_prefix_cidr)
-            member_prefix = _get_or_create_prefix(member_prefix_cidr)
-
-            # 11. Hub VPNTunnelEndpoint (concentrator) — endpoint_z.
-            # Look up by device + role so we reuse any pre-configured endpoint
-            # for this hub device rather than creating duplicates per tunnel.
-            hub_role, _ = Role.objects.get_or_create(name="Hub")
-            hub_endpoint, hub_created = VPNTunnelEndpoint.objects.get_or_create(
-                device=device,
-                role=hub_role,
-                defaults={
-                    "source_ipaddress": device.primary_ip,
-                },
-            )
-            hub_endpoint.protected_prefixes.add(hub_prefix)
-            if hub_created:
-                hub_endpoint._custom_field_data["custom_tunnel_builder_crypto_map_name"] = "VPN"  # pylint: disable=protected-access
-                hub_endpoint.save()
+            # 10. Attach the pre-configured hub endpoint (endpoint_z).
             tunnel.endpoint_z = hub_endpoint
-            tunnel.save()
 
-            # 12. Spoke VPNTunnelEndpoint (member) — endpoint_a.
-            # Created fresh per tunnel; name identifies the member, device ties
-            # the endpoint to the placeholder device created for this member.
+            # 11. Spoke VPNTunnelEndpoint (endpoint_a) — one protected prefix
+            # association per entry in member_protected_prefixes.
             spoke_role, _ = Role.objects.get_or_create(name="Spoke")
             spoke_endpoint = VPNTunnelEndpoint.objects.create(
                 name=f"{member_name}-{loc_slug}",
@@ -415,7 +414,8 @@ class PortalTunnelRequestView(APIView):
                 device=member_device,
                 source_ipaddress=member_ip,
             )
-            spoke_endpoint.protected_prefixes.add(member_prefix)
+            for cidr in member_prefix_cidrs:
+                spoke_endpoint.protected_prefixes.add(_get_or_create_prefix(cidr))
             tunnel.endpoint_a = spoke_endpoint
             tunnel.save()
 

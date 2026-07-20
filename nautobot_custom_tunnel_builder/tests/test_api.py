@@ -167,6 +167,16 @@ def _create_hub_endpoint(device, hub_prefix_cidr="10.100.0.0/24"):
     return hub_endpoint
 
 
+def _ensure_vpntunnel_statuses():
+    """Ensure Planned and Decommissioning statuses are mapped to VPNTunnel."""
+    from django.contrib.contenttypes.models import ContentType  # pylint: disable=import-outside-toplevel
+
+    vpntunnel_ct = ContentType.objects.get_for_model(VPNTunnel)
+    for status_name in ("Planned", "Decommissioning"):
+        st, _ = Status.objects.get_or_create(name=status_name)
+        st.content_types.add(vpntunnel_ct)
+
+
 def _valid_payload(device, template_profile):
     """Return a valid portal request payload."""
     return {
@@ -326,6 +336,7 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
         LocationType.objects.get_or_create(name="Site")
         # Pre-configure hub endpoint with protected prefix (required before portal can provision)
         _create_hub_endpoint(cls.device)
+        _ensure_vpntunnel_statuses()
 
     def _post(self, url, data=None):
         return self.client.post(url, data=data or {}, format="json", **self.header)
@@ -488,6 +499,37 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
         self.assertIn("192.168.10.0/24", prefix_strs)
         self.assertIn("10.50.0.0/16", prefix_strs)
 
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
+    def test_tunnel_created_with_planned_status(self, _mock_op):
+        """New tunnels are born Planned; the build job flips them Active."""
+        payload = _valid_payload(self.device, self.template_profile)
+        response = self._post(PORTAL_REQUEST_URL, payload)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        tunnel = VPNTunnel.objects.get(pk=response.json()["tunnel_id"])
+        self.assertEqual(tunnel.status.name, "Planned")
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
+    def test_missing_hub_endpoint_returns_400(self, _mock_op):
+        """A device with no pre-configured hub endpoint yields 400, not 500."""
+        bare_device = _create_test_device(name="no-hub-endpoint-router")
+        payload = _valid_payload(bare_device, self.template_profile)
+        response = self._post(PORTAL_REQUEST_URL, payload)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("device", response.json())
+        self.assertIn("hub", response.json()["device"][0].lower())
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
+    def test_hub_endpoint_without_prefix_returns_400(self, _mock_op):
+        """A hub endpoint with no protected prefix yields 400, not 500."""
+        bare_device = _create_test_device(name="no-prefix-hub-router")
+        hub_endpoint = _create_hub_endpoint(bare_device)
+        hub_endpoint.protected_prefixes.clear()
+        payload = _valid_payload(bare_device, self.template_profile)
+        response = self._post(PORTAL_REQUEST_URL, payload)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("device", response.json())
+        self.assertIn("protected prefix", response.json()["device"][0])
+
 
 # ---------------------------------------------------------------------------
 # Tunnel status endpoint tests (authenticated)
@@ -518,6 +560,7 @@ class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
         DeviceType.objects.get_or_create(model="Member VPN Endpoint", manufacturer=manufacturer)
         LocationType.objects.get_or_create(name="Site")
         _create_hub_endpoint(device)
+        _ensure_vpntunnel_statuses()
 
         payload = _valid_payload(device, template)
         payload["member_name"] = "psk-test-member"
@@ -526,6 +569,11 @@ class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
         self.assertEqual(post_response.status_code, status.HTTP_202_ACCEPTED)
 
         tunnel_id = post_response.json()["tunnel_id"]
+        # Simulate a successful PortalBuildIpsecTunnel run: the job flips Planned → Active.
+        tunnel = VPNTunnel.objects.get(pk=tunnel_id)
+        tunnel.status = Status.objects.get_for_model(VPNTunnel).get(name="Active")
+        tunnel.save()
+
         response = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
@@ -555,6 +603,7 @@ class EndToEndConfigGenerationTest(APITestCase):  # pylint: disable=too-many-anc
         LocationType.objects.get_or_create(name="Site")
         # Pre-configure hub endpoint with protected prefix (required before portal can provision)
         _create_hub_endpoint(cls.device)
+        _ensure_vpntunnel_statuses()
 
     def _post(self, url, data=None):
         return self.client.post(url, data=data or {}, format="json", **self.header)
