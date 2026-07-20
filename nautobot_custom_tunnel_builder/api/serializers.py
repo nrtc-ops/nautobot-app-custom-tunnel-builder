@@ -66,6 +66,11 @@ class PortalTunnelRequestSerializer(serializers.Serializer):  # pylint: disable=
         help_text="Member's protected networks in CIDR notation (e.g. ['192.168.1.0/24', '10.0.0.0/8']).",
     )
 
+    member_connect_request_id = serializers.CharField(
+        max_length=64,
+        help_text="Member Connect portal VpnRequest UUID — cross-system idempotency key stamped on the tunnel.",
+    )
+
     def validate_member_name(self, value):
         """Validate member_name is a valid slug."""
         if not _SLUG_RE.match(value):

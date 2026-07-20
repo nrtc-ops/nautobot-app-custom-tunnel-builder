@@ -51,6 +51,7 @@ REQUIRED_FIELDS = (
     "template_vpn_profile",
     "remote_peer_ip",
     "member_protected_prefixes",
+    "member_connect_request_id",
 )
 
 # Mock path for 1Password SDK
@@ -179,8 +180,8 @@ def _ensure_vpntunnel_statuses():
         st.content_types.add(vpntunnel_ct)
 
 
-def _valid_payload(device, template_profile):
-    """Return a valid portal request payload."""
+def _valid_payload(device, template_profile, request_id=None):
+    """Return a valid portal request payload with a fresh idempotency key."""
     return {
         "member_name": "acme-corp",
         "member_display_name": "Acme Corp",
@@ -190,6 +191,7 @@ def _valid_payload(device, template_profile):
         "template_vpn_profile": str(template_profile.pk),
         "remote_peer_ip": "203.0.113.50",
         "member_protected_prefixes": ["192.168.1.0/24"],
+        "member_connect_request_id": request_id or str(uuid.uuid4()),
     }
 
 
@@ -433,6 +435,50 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
 
         # Exact same request
         resp2 = self._post(PORTAL_REQUEST_URL, payload)
+        self.assertEqual(resp2.status_code, status.HTTP_409_CONFLICT)
+        self.assertIn("tunnel_id", resp2.json())
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
+    def test_missing_request_id_returns_400(self, _mock_op):
+        """member_connect_request_id is required."""
+        payload = _valid_payload(self.device, self.template_profile)
+        del payload["member_connect_request_id"]
+        response = self._post(PORTAL_REQUEST_URL, payload)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("member_connect_request_id", response.json())
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
+    def test_request_id_stamped_on_tunnel(self, _mock_op):
+        """The idempotency key is stored as a custom field on the created tunnel."""
+        payload = _valid_payload(self.device, self.template_profile)
+        response = self._post(PORTAL_REQUEST_URL, payload)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        tunnel = VPNTunnel.objects.get(pk=response.json()["tunnel_id"])
+        self.assertEqual(
+            tunnel._custom_field_data["member_connect_request_id"],  # pylint: disable=protected-access
+            payload["member_connect_request_id"],
+        )
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
+    def test_duplicate_request_id_returns_409_with_original_tunnel(self, _mock_op):
+        """A replay with the same request id returns 409 + the original tunnel_id,
+        even when other parameters differ."""
+        payload = _valid_payload(self.device, self.template_profile)
+        resp1 = self._post(PORTAL_REQUEST_URL, payload)
+        self.assertEqual(resp1.status_code, status.HTTP_202_ACCEPTED)
+        payload2 = dict(payload, remote_peer_ip="203.0.113.51")
+        resp2 = self._post(PORTAL_REQUEST_URL, payload2)
+        self.assertEqual(resp2.status_code, status.HTTP_409_CONFLICT)
+        body = resp2.json()
+        self.assertIn("detail", body)
+        self.assertEqual(body["tunnel_id"], resp1.json()["tunnel_id"])
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
+    def test_same_params_different_request_id_still_409(self, _mock_op):
+        """The name+peer duplicate check still fires for distinct request ids."""
+        resp1 = self._post(PORTAL_REQUEST_URL, _valid_payload(self.device, self.template_profile))
+        self.assertEqual(resp1.status_code, status.HTTP_202_ACCEPTED)
+        resp2 = self._post(PORTAL_REQUEST_URL, _valid_payload(self.device, self.template_profile))
         self.assertEqual(resp2.status_code, status.HTTP_409_CONFLICT)
         self.assertIn("tunnel_id", resp2.json())
 

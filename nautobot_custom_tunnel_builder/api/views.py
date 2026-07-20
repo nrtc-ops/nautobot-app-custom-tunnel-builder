@@ -191,9 +191,26 @@ class PortalTunnelRequestView(APIView):
         city = data["location_city"]
         state = data["location_state"]
         member_prefix_cidrs = data["member_protected_prefixes"]
+        request_id = data["member_connect_request_id"]
 
         loc_slug = _location_slug(city, state)
         display_location = f"{city}, {state.upper()}"
+
+        # -------------------------------------------------------------- #
+        # Idempotency: a replayed portal request returns the original     #
+        # tunnel. Checked before every other gate.                        #
+        # -------------------------------------------------------------- #
+        existing_tunnel = VPNTunnel.objects.filter(
+            _custom_field_data__member_connect_request_id=request_id
+        ).first()
+        if existing_tunnel:
+            return Response(
+                {
+                    "detail": "A tunnel for this member_connect_request_id already exists.",
+                    "tunnel_id": str(existing_tunnel.pk),
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
 
         # -------------------------------------------------------------- #
         # Hub endpoint pre-check. The hub protected prefix comes from the  #
@@ -256,6 +273,7 @@ class PortalTunnelRequestView(APIView):
                 hub_endpoint,
                 member_prefix_cidrs,
                 vpn_name,
+                request_id,
             )
         except Exception:  # pylint: disable=broad-exception-caught
             logger.exception("Failed to create tunnel for member '%s'.", member_name)
@@ -317,6 +335,7 @@ class PortalTunnelRequestView(APIView):
         hub_endpoint,
         member_prefix_cidrs,
         vpn_name,
+        request_id,
     ):
         """Create the full VPN object hierarchy inside an atomic transaction.
 
@@ -401,6 +420,7 @@ class PortalTunnelRequestView(APIView):
                 vpn=vpn,
                 vpn_profile=profile,
             )
+            tunnel._custom_field_data["member_connect_request_id"] = request_id  # pylint: disable=protected-access
 
             # 10. Attach the pre-configured hub endpoint (endpoint_z).
             tunnel.endpoint_z = hub_endpoint
