@@ -11,20 +11,27 @@ Requires the fake-cisco container to be running and reachable.  Set env vars:
 The test does NOT mock SSH.  Netmiko opens a real TCP connection to the fake
 Cisco server, negotiates SSH, pushes config commands, and saves.  The fake
 server logs every config-mode line it receives to /output/commands.txt inside
-the container; we read that file back via `docker exec` to assert content.
+its own container; that same named volume is mounted read-only into the
+nautobot container at /fake-cisco-output (see docker-compose.fake-cisco.yml),
+so we read the file directly instead of shelling out to `docker exec` (the
+nautobot container has no docker CLI/socket for docker-in-docker).
+
+The file is shared across all test methods in this class and is never
+truncated here, so assertions use substring checks (assertIn) that tolerate
+content appended by earlier runs/methods rather than assuming an empty file.
 """
 
 import logging
 import os
-import subprocess
 
-from nautobot.core.testing import TestCase
 from django.test import tag
+from nautobot.core.testing import TestCase
 
 from nautobot_custom_tunnel_builder.jobs import IosXeConfigError, push_config_to_device
 
 FAKE_HOST = os.environ.get("FAKE_CISCO_HOST", "fake-cisco")
 FAKE_PORT = int(os.environ.get("FAKE_CISCO_PORT", "22"))
+FAKE_CISCO_OUTPUT_DIR = os.environ.get("FAKE_CISCO_OUTPUT_DIR", "/fake-cisco-output")
 
 # Minimal IKEv2 config block — sequence 9999 so it won't collide with anything
 _TEST_COMMANDS = [
@@ -62,7 +69,7 @@ _DEVICE_PARAMS = {
     "host": FAKE_HOST,
     "username": "admin",
     "password": "admin",
-    "secret": "",   # no enable needed — fake server starts in privileged mode
+    "secret": "",  # no enable needed — fake server starts in privileged mode
     "port": FAKE_PORT,
     "timeout": 10,
     "session_log": None,
@@ -70,16 +77,17 @@ _DEVICE_PARAMS = {
 
 
 def _read_output_from_container() -> str:
-    """Read /output/commands.txt from the fake-cisco container via docker exec."""
+    """Read fake-cisco's commands.txt via the shared read-only volume mount.
+
+    fake-cisco writes to /output/commands.txt inside its own container; that
+    same named volume is bind-mounted read-only into this (nautobot) container
+    at FAKE_CISCO_OUTPUT_DIR (default /fake-cisco-output).
+    """
+    path = os.path.join(FAKE_CISCO_OUTPUT_DIR, "commands.txt")
     try:
-        result = subprocess.run(
-            ["docker", "exec", "fake-cisco", "cat", "/output/commands.txt"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        return result.stdout
-    except (subprocess.SubprocessError, FileNotFoundError):
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
         return ""
 
 

@@ -11,6 +11,12 @@
 #   SSH target from your Mac:          localhost:2222
 #   Watch received commands:           docker logs -f fake-cisco
 #   Dump commands file:                docker exec fake-cisco cat /output/commands.txt
+#
+# The same fake-cisco-output volume is also mounted read-only into the
+# nautobot container at /fake-cisco-output so that in-container integration
+# tests (nautobot_custom_tunnel_builder/tests/test_integration_ssh.py) can
+# read back what fake-cisco received without shelling out to `docker exec`
+# (the nautobot container has no docker CLI/socket for docker-in-docker).
 
 services:
   fake-cisco:
@@ -35,6 +41,7 @@ services:
       OP_DEV_BYPASS: "true"
     volumes:
       - "dev-psk:/tmp/nautobot-dev-psk"
+      - "fake-cisco-output:/fake-cisco-output:ro"
 
   worker:
     environment:
