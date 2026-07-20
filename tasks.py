@@ -431,6 +431,12 @@ def nbshell(context, file="", env={}, plain=False):
 
 
 @task
+def seed_e2e(context):
+    """Seed idempotent E2E harness data (hub device, template profile, portal token) in the nautobot container."""
+    nbshell(context, plain=True, file="development/seed_e2e.py")
+
+
+@task
 def shell_plus(context):
     """Launch an interactive shell_plus session."""
     command = "nautobot-server shell_plus"

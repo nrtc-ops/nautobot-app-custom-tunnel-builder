@@ -30,6 +30,9 @@ NAUTOBOT_TOKEN="${NAUTOBOT_TOKEN:-}"
 HUB_DEVICE_UUID="${HUB_DEVICE_UUID:-}"
 TEMPLATE_PROFILE_UUID="${TEMPLATE_PROFILE_UUID:-}"
 
+# Idempotency key — override to test replay/409 behavior.
+REQUEST_ID="${REQUEST_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
+
 # ---- Validation ---------------------------------------------------------- #
 if [[ -z "$NAUTOBOT_TOKEN" ]]; then
     echo "ERROR: Set NAUTOBOT_TOKEN to a valid Nautobot API token."
@@ -142,7 +145,8 @@ RESPONSE=$(curl -s -w "\n%{http_code}" \
         \"device\": \"${HUB_DEVICE_UUID}\",
         \"template_vpn_profile\": \"${TEMPLATE_PROFILE_UUID}\",
         \"remote_peer_ip\": \"203.0.113.100\",
-        \"member_protected_prefixes\": [\"192.168.200.0/24\"]
+        \"member_protected_prefixes\": [\"192.168.200.0/24\"],
+        \"member_connect_request_id\": \"${REQUEST_ID}\"
     }")
 
 HTTP_STATUS=$(echo "$RESPONSE" | tail -1)
