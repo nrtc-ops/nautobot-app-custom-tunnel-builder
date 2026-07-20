@@ -439,6 +439,21 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
         self.assertIn("tunnel_id", resp2.json())
 
     @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
+    def test_request_id_dedupe_takes_advisory_lock(self, _mock_op):
+        """Check-then-create on the request id is serialized with a pg advisory lock."""
+        payload = _valid_payload(self.device, self.template_profile)
+        with CaptureQueriesContext(connection) as ctx:
+            response = self._post(PORTAL_REQUEST_URL, payload)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertTrue(
+            any(
+                "pg_advisory_xact_lock" in q["sql"] and "member-connect-request/" in q["sql"]
+                for q in ctx.captured_queries
+            ),
+            "Expected pg_advisory_xact_lock keyed on the member_connect_request_id",
+        )
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
     def test_missing_request_id_returns_400(self, _mock_op):
         """member_connect_request_id is required."""
         payload = _valid_payload(self.device, self.template_profile)

@@ -3,7 +3,7 @@
 import logging
 import secrets
 
-from django.db import transaction
+from django.db import connection, transaction
 from nautobot.core.api.authentication import TokenAuthentication
 from nautobot.dcim.models import Device, DeviceType, Interface, Manufacturer
 from nautobot.extras.models import Job as JobModel
@@ -197,90 +197,108 @@ class PortalTunnelRequestView(APIView):
         display_location = f"{city}, {state.upper()}"
 
         # -------------------------------------------------------------- #
-        # Idempotency: a replayed portal request returns the original     #
-        # tunnel. Checked before every other gate.                        #
+        # Serialize check-then-create on the request id: one transaction  #
+        # shared by the dedupe check and hierarchy creation, guarded by a  #
+        # Postgres transaction-scoped advisory lock so two concurrent      #
+        # replays of the same request_id can't both pass the dedupe check. #
         # -------------------------------------------------------------- #
-        existing_tunnel = VPNTunnel.objects.filter(
-            _custom_field_data__member_connect_request_id=request_id
-        ).first()
-        if existing_tunnel:
-            return Response(
-                {
-                    "detail": "A tunnel for this member_connect_request_id already exists.",
-                    "tunnel_id": str(existing_tunnel.pk),
-                },
-                status=status.HTTP_409_CONFLICT,
-            )
-
-        # -------------------------------------------------------------- #
-        # Hub endpoint pre-check. The hub protected prefix comes from the  #
-        # pre-configured hub VPNTunnelEndpoint, never from the request.    #
-        # -------------------------------------------------------------- #
-        hub_endpoint = VPNTunnelEndpoint.objects.filter(device=device, role__name="Hub").first()
-        if hub_endpoint is None:
-            return Response(
-                {
-                    "device": [
-                        f"Device '{device.name}' has no pre-configured hub VPN tunnel endpoint "
-                        "(role 'Hub'). An administrator must create one with a protected prefix "
-                        "before tunnels can be requested."
-                    ]
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if not hub_endpoint.protected_prefixes.exists():
-            return Response(
-                {
-                    "device": [
-                        f"The hub endpoint on device '{device.name}' has no protected prefix. "
-                        "An administrator must add one before tunnels can be requested."
-                    ]
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # -------------------------------------------------------------- #
-        # Duplicate check (same member+location VPN, same remote peer)     #
-        # -------------------------------------------------------------- #
-        vpn_name = f"vpn-nrtc-ms-{member_name}-{loc_slug}-001"
-        existing_vpn = VPN.objects.filter(vpn_id=vpn_name).first()
-        if existing_vpn:
-            for tun in existing_vpn.vpn_tunnels.all():
-                spoke = tun.endpoint_a
-                if spoke and spoke.source_ipaddress and str(spoke.source_ipaddress.address.ip) == remote_peer_ip:
-                    return Response(
-                        {
-                            "detail": "A tunnel with these parameters already exists.",
-                            "tunnel_id": str(tun.pk),
-                        },
-                        status=status.HTTP_409_CONFLICT,
+        with transaction.atomic():
+            if connection.vendor == "postgresql":
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                        [f"member-connect-request/{request_id}"],
                     )
 
-        # -------------------------------------------------------------- #
-        # Create full object hierarchy inside a transaction                #
-        # -------------------------------------------------------------- #
-        try:
-            tunnel, vpn = self._create_tunnel_hierarchy(
-                device,
-                template,
-                member_name,
-                member_display,
-                city,
-                state,
-                loc_slug,
-                display_location,
-                remote_peer_ip,
-                hub_endpoint,
-                member_prefix_cidrs,
-                vpn_name,
-                request_id,
-            )
-        except Exception:  # pylint: disable=broad-exception-caught
-            logger.exception("Failed to create tunnel for member '%s'.", member_name)
-            return Response(
-                {"detail": "Failed to create tunnel. Contact an administrator."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            # ---------------------------------------------------------- #
+            # Idempotency: a replayed portal request returns the original #
+            # tunnel. Checked before every other gate.                    #
+            # ---------------------------------------------------------- #
+            existing_tunnel = VPNTunnel.objects.filter(
+                _custom_field_data__member_connect_request_id=request_id
+            ).first()
+            if existing_tunnel:
+                return Response(
+                    {
+                        "detail": "A tunnel for this member_connect_request_id already exists.",
+                        "tunnel_id": str(existing_tunnel.pk),
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            # ---------------------------------------------------------- #
+            # Hub endpoint pre-check. The hub protected prefix comes from  #
+            # the pre-configured hub VPNTunnelEndpoint, never the request. #
+            # ---------------------------------------------------------- #
+            hub_endpoint = VPNTunnelEndpoint.objects.filter(device=device, role__name="Hub").first()
+            if hub_endpoint is None:
+                return Response(
+                    {
+                        "device": [
+                            f"Device '{device.name}' has no pre-configured hub VPN tunnel endpoint "
+                            "(role 'Hub'). An administrator must create one with a protected prefix "
+                            "before tunnels can be requested."
+                        ]
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not hub_endpoint.protected_prefixes.exists():
+                return Response(
+                    {
+                        "device": [
+                            f"The hub endpoint on device '{device.name}' has no protected prefix. "
+                            "An administrator must add one before tunnels can be requested."
+                        ]
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # ---------------------------------------------------------- #
+            # Duplicate check (same member+location VPN, same remote peer) #
+            # ---------------------------------------------------------- #
+            vpn_name = f"vpn-nrtc-ms-{member_name}-{loc_slug}-001"
+            existing_vpn = VPN.objects.filter(vpn_id=vpn_name).first()
+            if existing_vpn:
+                for tun in existing_vpn.vpn_tunnels.all():
+                    spoke = tun.endpoint_a
+                    if (
+                        spoke
+                        and spoke.source_ipaddress
+                        and str(spoke.source_ipaddress.address.ip) == remote_peer_ip
+                    ):
+                        return Response(
+                            {
+                                "detail": "A tunnel with these parameters already exists.",
+                                "tunnel_id": str(tun.pk),
+                            },
+                            status=status.HTTP_409_CONFLICT,
+                        )
+
+            # ---------------------------------------------------------- #
+            # Create full object hierarchy (nested savepoint)              #
+            # ---------------------------------------------------------- #
+            try:
+                tunnel, vpn = self._create_tunnel_hierarchy(
+                    device,
+                    template,
+                    member_name,
+                    member_display,
+                    city,
+                    state,
+                    loc_slug,
+                    display_location,
+                    remote_peer_ip,
+                    hub_endpoint,
+                    member_prefix_cidrs,
+                    vpn_name,
+                    request_id,
+                )
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.exception("Failed to create tunnel for member '%s'.", member_name)
+                return Response(
+                    {"detail": "Failed to create tunnel. Contact an administrator."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
 
         # -------------------------------------------------------------- #
         # Enqueue the build job                                            #
