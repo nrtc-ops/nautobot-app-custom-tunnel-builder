@@ -10,13 +10,15 @@ Creates (get_or_create throughout — safe to re-run):
   - Template VPNProfile "Standard-IKEv2-AES256" + Phase 1/2 policies + assignments
   - Hub VPNTunnelEndpoint (device + role "Hub") with protected prefix + crypto map CF
   - "Planned" and "Decommissioning" statuses mapped to VPNTunnel
+  - PortalBuildIpsecTunnel Job row enabled (disabled by default on a fresh DB;
+    the portal view's enqueue would otherwise fail with RunJobTaskFailed)
   - Portal service account "portal-svc" + API token (printed on first run only)
 """
 
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from nautobot.dcim.models import Device, DeviceType, Interface, Location, LocationType, Manufacturer, Platform
-from nautobot.extras.models import Role, Status
+from nautobot.extras.models import Job, Role, Status
 from nautobot.ipam.models import IPAddress, IPAddressToInterface, Namespace, Prefix
 from nautobot.users.models import Token
 from nautobot.vpn.models import (
@@ -163,6 +165,21 @@ def _seed_tunnel_statuses():
         st.content_types.add(vpntunnel_ct)
 
 
+def _seed_portal_build_job():
+    # On a fresh DB, Nautobot registers Job rows disabled by default. The
+    # portal view enqueues this job by module_name/job_class_name (same
+    # lookup as api/views.py); if it's not enabled, JobResult.enqueue_job()
+    # raises RunJobTaskFailed and the tunnel is stuck Planned forever.
+    job = Job.objects.get(
+        module_name="nautobot_custom_tunnel_builder.jobs",
+        job_class_name="PortalBuildIpsecTunnel",
+    )
+    if not job.enabled:
+        job.enabled = True
+        job.save()
+    return job
+
+
 def _seed_service_account():
     # Superuser: the portal-request POST itself only requires IsAuthenticated
     # (it reads/writes via plain ORM calls, no RBAC-gated queryset), but
@@ -199,6 +216,8 @@ def _main():
     print(f"  hub endpoint:     device={device.name} role=Hub prefix={HUB_PROTECTED_PREFIX}")
     _seed_tunnel_statuses()
     print("  statuses:         Planned + Decommissioning mapped to VPNTunnel")
+    job = _seed_portal_build_job()
+    print(f"  job:              {job.name} enabled")
     _seed_service_account()
     print("Done. Use the UUIDs above as HUB_DEVICE_UUID / TEMPLATE_PROFILE_UUID for")
     print("development/test-portal-api.sh and as the portal's nautobot.hub_device_id /")

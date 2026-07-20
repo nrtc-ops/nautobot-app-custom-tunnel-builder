@@ -129,6 +129,13 @@ echo "Hub device:        ${HUB_DEVICE_UUID}"
 echo "Template profile:  ${TEMPLATE_PROFILE_UUID}"
 echo ""
 
+# fake-cisco's /output/commands.txt persists across dev-stack rebuilds (named
+# volume/bind mount survives `invoke destroy`). Truncate it so Step 3 below
+# reflects only this run's config, not leftovers from a previous session.
+echo "Resetting fake-cisco command log for this run..."
+docker exec fake-cisco sh -c ': > /output/commands.txt' 2>/dev/null || true
+echo ""
+
 # ---- Step 1: POST tunnel request ----------------------------------------- #
 echo ">>> Step 1: POST ${PORTAL_URL}"
 echo ""
@@ -200,7 +207,7 @@ done
 
 echo ""
 if [[ "$TUNNEL_STATUS" != "Active" ]]; then
-    echo "WARNING: Tunnel did not reach Active status within ${MAX_WAIT}s (still: ${TUNNEL_STATUS})."
+    echo "ERROR: Tunnel did not reach Active status within ${MAX_WAIT}s (still: ${TUNNEL_STATUS})."
     echo "Job may still be running.  Check: ${NAUTOBOT_URL}/extras/job-results/${JOB_ID}/"
 fi
 
@@ -217,6 +224,12 @@ if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^fake-cisco$"; then
 else
     echo "(fake-cisco container not running — skipping device output check)"
     echo "Start it with the docker-compose.fake-cisco.yml overlay."
+fi
+
+if [[ "$TUNNEL_STATUS" != "Active" ]]; then
+    echo ""
+    echo "FAILED: Tunnel ${TUNNEL_ID} did not reach Active status (still: ${TUNNEL_STATUS})."
+    exit 1
 fi
 
 echo ""
