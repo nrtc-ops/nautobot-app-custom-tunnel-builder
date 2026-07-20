@@ -429,7 +429,7 @@ class TunnelStatusView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, tunnel_id):
-        """Return tunnel status and name."""
+        """Return tunnel status; include the PSK exactly once when Active."""
         try:
             tunnel = VPNTunnel.objects.get(pk=tunnel_id)
         except VPNTunnel.DoesNotExist:
@@ -438,10 +438,26 @@ class TunnelStatusView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        return Response(
-            {
-                "tunnel_id": str(tunnel.pk),
-                "tunnel_name": tunnel.name,
-                "status": tunnel.status.name,
-            }
-        )
+        payload = {
+            "tunnel_id": str(tunnel.pk),
+            "tunnel_name": tunnel.name,
+            "status": tunnel.status.name,
+        }
+
+        profile = tunnel.vpn_profile
+        if tunnel.status.name == "Active" and profile is not None:
+            already_retrieved = profile._custom_field_data.get(  # pylint: disable=protected-access
+                "custom_tunnel_builder_psk_retrieved"
+            )
+            if not already_retrieved:
+                secret = profile.secrets_group.secrets.first() if profile.secrets_group else None
+                if secret:
+                    try:
+                        payload["pre_shared_key"] = secret.get_value()
+                    except Exception:  # pylint: disable=broad-exception-caught
+                        logger.exception("Failed to retrieve PSK for tunnel '%s'.", tunnel.name)
+                    else:
+                        profile._custom_field_data["custom_tunnel_builder_psk_retrieved"] = True  # pylint: disable=protected-access
+                        profile.save()
+
+        return Response(payload)

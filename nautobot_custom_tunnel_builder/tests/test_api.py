@@ -537,10 +537,33 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
 
 
 class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
-    """Test the tunnel-status endpoint."""
+    """Test the tunnel-status endpoint, including PSK-once semantics."""
 
     def _get(self, url):
         return self.client.get(url, **self.header)
+
+    def _post_tunnel(self, member_name, peer_ip):
+        """Provision a tunnel via the portal API; returns its tunnel_id (status Planned)."""
+        device = _create_test_device(name=f"{member_name}-router")
+        template = _create_template_vpn_profile()
+        manufacturer, _ = Manufacturer.objects.get_or_create(name="Generic")
+        DeviceType.objects.get_or_create(model="Member VPN Endpoint", manufacturer=manufacturer)
+        LocationType.objects.get_or_create(name="Site")
+        _create_hub_endpoint(device)
+        _ensure_vpntunnel_statuses()
+        payload = _valid_payload(device, template)
+        payload["member_name"] = member_name
+        payload["remote_peer_ip"] = peer_ip
+        response = self.client.post(PORTAL_REQUEST_URL, data=payload, format="json", **self.header)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.content)
+        return response.json()["tunnel_id"]
+
+    @staticmethod
+    def _activate(tunnel_id):
+        """Simulate a successful PortalBuildIpsecTunnel run: flip Planned → Active."""
+        tunnel = VPNTunnel.objects.get(pk=tunnel_id)
+        tunnel.status = Status.objects.get_for_model(VPNTunnel).get(name="Active")
+        tunnel.save()
 
     def test_non_existent_tunnel_returns_404(self):
         """GET with a UUID that doesn't match any VPNTunnel returns 404."""
@@ -554,32 +577,53 @@ class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
     @patch("nautobot.extras.models.Secret.get_value", return_value="TestPSKReturnedOnce!")
     def test_active_tunnel_returns_psk(self, _mock_get_value, _mock_op):
         """Status endpoint returns pre_shared_key when tunnel is Active."""
-        device = _create_test_device(name="psk-test-router")
-        template = _create_template_vpn_profile()
-        manufacturer, _ = Manufacturer.objects.get_or_create(name="Generic")
-        DeviceType.objects.get_or_create(model="Member VPN Endpoint", manufacturer=manufacturer)
-        LocationType.objects.get_or_create(name="Site")
-        _create_hub_endpoint(device)
-        _ensure_vpntunnel_statuses()
-
-        payload = _valid_payload(device, template)
-        payload["member_name"] = "psk-test-member"
-        payload["remote_peer_ip"] = "203.0.113.77"
-        post_response = self.client.post(PORTAL_REQUEST_URL, data=payload, format="json", **self.header)
-        self.assertEqual(post_response.status_code, status.HTTP_202_ACCEPTED)
-
-        tunnel_id = post_response.json()["tunnel_id"]
-        # Simulate a successful PortalBuildIpsecTunnel run: the job flips Planned → Active.
-        tunnel = VPNTunnel.objects.get(pk=tunnel_id)
-        tunnel.status = Status.objects.get_for_model(VPNTunnel).get(name="Active")
-        tunnel.save()
-
+        tunnel_id = self._post_tunnel("psk-test-member", "203.0.113.77")
+        self._activate(tunnel_id)
         response = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
         self.assertEqual(data["status"], "Active")
         self.assertIn("pre_shared_key", data)
         self.assertEqual(data["pre_shared_key"], "TestPSKReturnedOnce!")
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-psk-test")
+    @patch("nautobot.extras.models.Secret.get_value", return_value="TestPSKReturnedOnce!")
+    def test_planned_tunnel_does_not_include_psk(self, _mock_get_value, _mock_op):
+        """A Planned (not yet built) tunnel never exposes the PSK."""
+        tunnel_id = self._post_tunnel("psk-planned-member", "203.0.113.78")
+        response = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data["status"], "Planned")
+        self.assertNotIn("pre_shared_key", data)
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-psk-test")
+    @patch("nautobot.extras.models.Secret.get_value", return_value="TestPSKReturnedOnce!")
+    def test_first_active_poll_flips_psk_retrieved_flag(self, _mock_get_value, _mock_op):
+        """The first Active poll sets custom_tunnel_builder_psk_retrieved on the profile."""
+        tunnel_id = self._post_tunnel("psk-flip-member", "203.0.113.79")
+        self._activate(tunnel_id)
+        response = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id))
+        self.assertIn("pre_shared_key", response.json())
+        tunnel = VPNTunnel.objects.get(pk=tunnel_id)
+        tunnel.vpn_profile.refresh_from_db()
+        self.assertTrue(
+            tunnel.vpn_profile._custom_field_data["custom_tunnel_builder_psk_retrieved"]  # pylint: disable=protected-access
+        )
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-psk-test")
+    @patch("nautobot.extras.models.Secret.get_value", return_value="TestPSKReturnedOnce!")
+    def test_second_poll_omits_psk(self, _mock_get_value, _mock_op):
+        """The PSK is offered exactly once; the second Active poll omits it."""
+        tunnel_id = self._post_tunnel("psk-once-member", "203.0.113.80")
+        self._activate(tunnel_id)
+        first = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id))
+        self.assertIn("pre_shared_key", first.json())
+        second = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id))
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        data = second.json()
+        self.assertEqual(data["status"], "Active")
+        self.assertNotIn("pre_shared_key", data)
 
 
 # ---------------------------------------------------------------------------
