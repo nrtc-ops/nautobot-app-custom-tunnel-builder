@@ -4,6 +4,8 @@ import asyncio
 import logging
 import os
 
+from django.conf import settings
+
 logger = logging.getLogger(__name__)
 
 OP_SERVICE_ACCOUNT_TOKEN = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN", "")
@@ -17,7 +19,21 @@ _DEV_PSK_DIR = "/tmp/nautobot-dev-psk"  # noqa: S108
 
 
 def _dev_bypass_enabled():
-    return os.environ.get("OP_DEV_BYPASS", "").lower() in ("true", "1", "yes")
+    """Dev bypass requires BOTH the OP_DEV_BYPASS env var and settings.DEBUG."""
+    if os.environ.get("OP_DEV_BYPASS", "").lower() not in ("true", "1", "yes"):
+        return False
+    if not settings.DEBUG:
+        logger.warning(
+            "OP_DEV_BYPASS is set but settings.DEBUG is False — bypass DISABLED; "
+            "PSKs will be stored in 1Password."
+        )
+        return False
+    logger.warning(
+        "OP_DEV_BYPASS ACTIVE: PSKs are written to %s instead of 1Password. "
+        "Never enable this in production.",
+        _DEV_PSK_DIR,
+    )
+    return True
 
 
 def store_psk_in_1password(psk, member_name, location_slug, sequence):

@@ -523,6 +523,47 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
         seq = tunnel2.vpn_profile._custom_field_data["custom_tunnel_builder_crypto_map_sequence"]  # pylint: disable=protected-access
         self.assertEqual(seq, 3010)
 
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
+    def test_legacy_sub_3000_sequences_ignored(self, _mock_op):
+        """Manual tunnels with sequences below 3000 must not drag allocation below the floor."""
+        hub_endpoint = VPNTunnelEndpoint.objects.get(device=self.device, role__name="Hub")
+        legacy_profile = VPNProfile.objects.create(name="legacy-manual-profile")
+        legacy_profile._custom_field_data["custom_tunnel_builder_crypto_map_sequence"] = 20  # pylint: disable=protected-access
+        legacy_profile.save()
+        legacy_vpn = VPN.objects.create(vpn_id="vpn-legacy-001", name="Legacy VPN")
+        planned = Status.objects.get_for_model(VPNTunnel).get(name="Planned")
+        legacy_tunnel = VPNTunnel.objects.create(
+            name="Legacy Tunnel - 20",
+            tunnel_id="vpn-tunnel-legacy-20",
+            status=planned,
+            vpn=legacy_vpn,
+            vpn_profile=legacy_profile,
+        )
+        legacy_tunnel.endpoint_z = hub_endpoint
+        legacy_tunnel.save()
+
+        payload = _valid_payload(self.device, self.template_profile)
+        response = self._post(PORTAL_REQUEST_URL, payload)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        tunnel = VPNTunnel.objects.get(pk=response.json()["tunnel_id"])
+        seq = tunnel.vpn_profile._custom_field_data["custom_tunnel_builder_crypto_map_sequence"]  # pylint: disable=protected-access
+        self.assertEqual(seq, 3000)
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
+    def test_sequence_allocation_takes_advisory_lock(self, _mock_op):
+        """Allocation serializes on a Postgres advisory lock keyed on the device pk."""
+        payload = _valid_payload(self.device, self.template_profile)
+        with CaptureQueriesContext(connection) as ctx:
+            response = self._post(PORTAL_REQUEST_URL, payload)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertTrue(
+            any(
+                "pg_advisory_xact_lock" in q["sql"] and str(self.device.pk) in q["sql"]
+                for q in ctx.captured_queries
+            ),
+            "Expected a pg_advisory_xact_lock keyed on the device pk during sequence allocation",
+        )
+
     @patch(OP_MOCK_PATH, side_effect=RuntimeError("1Password credentials not configured"))
     def test_1password_failure_rolls_back(self, _mock_op):
         """If 1Password fails, the transaction rolls back and no VPN objects are created."""

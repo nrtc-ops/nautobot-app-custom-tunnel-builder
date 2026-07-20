@@ -155,6 +155,34 @@ def _clone_vpn_profile(template, name, sequence):
     return profile
 
 
+SEQUENCE_FLOOR = 3000
+SEQUENCE_STEP = 10
+
+
+def _allocate_crypto_map_sequence(device):
+    """Return the next crypto map sequence (>= 3000, step 10) for a hub device.
+
+    Must be called inside transaction.atomic(). On PostgreSQL a
+    transaction-scoped advisory lock keyed on the device pk serializes
+    concurrent allocations so two first-tunnel requests cannot both compute
+    3000. Sequences below the floor (legacy manual crypto map entries) are
+    ignored so they cannot drag next_seq down into colliding values.
+    """
+    if connection.vendor == "postgresql":
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", [str(device.pk)])
+    existing_tunnels = VPNTunnel.objects.filter(endpoint_z__device=device).select_related("vpn_profile")
+    sequences = [
+        t.vpn_profile._custom_field_data.get("custom_tunnel_builder_crypto_map_sequence")  # pylint: disable=protected-access
+        for t in existing_tunnels
+        if t.vpn_profile
+    ]
+    portal_sequences = [s for s in sequences if isinstance(s, int) and s >= SEQUENCE_FLOOR]
+    if portal_sequences:
+        return max(portal_sequences) + SEQUENCE_STEP
+    return SEQUENCE_FLOOR
+
+
 def _get_or_create_prefix(cidr):
     """Get or create a Prefix in the Members namespace."""
     members_ns, _ = Namespace.objects.get_or_create(
@@ -386,19 +414,8 @@ class PortalTunnelRequestView(APIView):
                 },
             )
 
-            # 4. Calculate next crypto map sequence for this device.
-            existing_tunnels = VPNTunnel.objects.select_for_update(of=("self",)).filter(
-                endpoint_z__device=device,
-            ).select_related("vpn_profile")
-            sequences = [
-                t.vpn_profile._custom_field_data.get(  # pylint: disable=protected-access
-                    "custom_tunnel_builder_crypto_map_sequence", 0
-                )
-                for t in existing_tunnels
-                if t.vpn_profile
-            ]
-            max_seq = max(sequences) if sequences else None
-            next_seq = (max_seq + 10) if max_seq is not None else 3000
+            # 4. Allocate the next crypto map sequence (advisory-locked, floor 3000).
+            next_seq = _allocate_crypto_map_sequence(device)
 
             # 5. Generate PSK
             psk = secrets.token_urlsafe(32)
