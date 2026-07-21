@@ -119,10 +119,13 @@ class IpsecTunnelBuilderView(LoginRequiredMixin, PermissionRequiredMixin, View):
         }
 
         try:
+            # Model instances must be serialized to pks before enqueueing, or the
+            # worker's deserialize_data fails with RunJobTaskFailed (core job views
+            # do the same via Job.serialize_data).
             job_result = JobResult.enqueue_job(
                 job_model=job_model,
                 user=request.user,
-                **job_kwargs,
+                **job_model.job_class.serialize_data(job_kwargs),
             )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.exception("Failed to enqueue BuildIpsecTunnel job: %s", exc)
