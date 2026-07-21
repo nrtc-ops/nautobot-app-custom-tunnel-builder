@@ -1,0 +1,1 @@
+Fixed the internal tunnel-builder form failing every submission with RunJobTaskFailed: the view now serializes job kwargs (Device instance -> pk) via Job.serialize_data before enqueueing, matching core job views.
