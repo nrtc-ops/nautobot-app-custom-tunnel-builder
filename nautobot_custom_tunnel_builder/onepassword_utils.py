@@ -69,7 +69,10 @@ def get_secret_provider_params(op_item_id):
     """
     if _dev_bypass_enabled():
         return "text-file", {"path": f"{_DEV_PSK_DIR}/{op_item_id}"}
-    return "one-password", {"item_id": op_item_id, "field": "password"}
+    # Shape must match what NTC nautobot-secrets-providers' one-password
+    # provider reads (vault/item/field → op://vault/item/field). vault is the
+    # SDK write target (OP_VAULT_UUID); item is the created item id.
+    return "one-password", {"vault": os.environ.get("OP_VAULT_UUID", ""), "item": op_item_id, "field": "password"}
 
 
 def _store_psk_dev_bypass(psk, member_name, location_slug, sequence):

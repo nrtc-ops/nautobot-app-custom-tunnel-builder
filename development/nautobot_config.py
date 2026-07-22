@@ -118,6 +118,18 @@ if not _TESTING:
 # Apps
 #
 
-PLUGINS = ["nautobot_custom_tunnel_builder"]
+PLUGINS = ["nautobot_custom_tunnel_builder", "nautobot_secrets_providers"]
 
 PLUGINS_CONFIG = {}
+
+# Register the 1Password vault + token for NTC's one-password provider only
+# when real-OP env vars are present. Left empty for OP_DEV_BYPASS / offline dev
+# (which use the built-in text-file provider), so a missing token never breaks
+# those paths. The token source is the same OP_SERVICE_ACCOUNT_TOKEN the write
+# SDK uses, so read and write share one credential.
+_op_vault = os.environ.get("OP_VAULT_UUID", "")
+_op_token = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN", "")
+if _op_vault and _op_token:
+    PLUGINS_CONFIG["nautobot_secrets_providers"] = {
+        "one_password": {"vaults": {_op_vault: {"token": _op_token}}},
+    }
