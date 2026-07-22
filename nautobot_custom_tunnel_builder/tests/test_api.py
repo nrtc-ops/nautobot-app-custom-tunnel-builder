@@ -720,8 +720,25 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
 class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
     """Test the tunnel-status endpoint, including PSK-once semantics."""
 
+    def setUp(self):
+        super().setUp()
+        # The portal service account holds view permission on VPNTunnel; the
+        # endpoint restricts by it, so grant it here to represent that account.
+        self.add_permissions("vpn.view_vpntunnel")
+
     def _get(self, url):
         return self.client.get(url, **self.header)
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-noperm")
+    def test_token_without_view_permission_gets_404(self, _mock_op):
+        """A tunnel is invisible to a token lacking vpn.view_vpntunnel — no
+        status or PSK leak across the flat token boundary."""
+        tunnel_id = self._post_tunnel("noperm-member", "203.0.113.61")
+        self.user.object_permissions.clear()
+        self.user.refresh_from_db()
+        response = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertNotIn("pre_shared_key", response.json())
 
     def _post_tunnel(self, member_name, peer_ip):
         """Provision a tunnel via the portal API; returns its tunnel_id (status Planned)."""

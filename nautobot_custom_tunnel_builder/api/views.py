@@ -558,8 +558,12 @@ class TunnelStatusView(APIView):
 
     def get(self, request, tunnel_id):
         """Return tunnel status; include the PSK exactly once when Active."""
+        # Honor Nautobot ObjectPermissions: restrict the lookup to tunnels the
+        # caller may view. A token without vpn.view_vpntunnel (or outside its
+        # tenant constraint) gets the same 404 as a missing tunnel — no status
+        # or PSK leak across the flat token boundary. Superusers see all.
         try:
-            tunnel = VPNTunnel.objects.get(pk=tunnel_id)
+            tunnel = VPNTunnel.objects.restrict(request.user, "view").get(pk=tunnel_id)
         except VPNTunnel.DoesNotExist:
             return Response(
                 {"detail": "Tunnel not found."},
