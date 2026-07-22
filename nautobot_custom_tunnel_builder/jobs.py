@@ -746,9 +746,16 @@ class PortalBuildIpsecTunnel(Job):
                 tunnel.save()
             raise
 
-        # 5. Update tunnel status to Active on success
-        active_status = Status.objects.get_for_model(VPNTunnel).get(name="Active")
-        tunnel.status = active_status
+        # 5. Update tunnel status to Provisioned on success. Provisioned means
+        # the config is on the NRTC hub and the tunnel is ready to be brought
+        # up from the member side — it is not an operational claim.
+        # get_or_create is self-healing on fresh installs where the custom
+        # status has not been seeded yet.
+        from django.contrib.contenttypes.models import ContentType  # pylint: disable=import-outside-toplevel
+
+        provisioned_status, _ = Status.objects.get_or_create(name="Provisioned")
+        provisioned_status.content_types.add(ContentType.objects.get_for_model(VPNTunnel))
+        tunnel.status = provisioned_status
         tunnel.save()
 
         self.logger.info(

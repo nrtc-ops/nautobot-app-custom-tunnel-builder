@@ -9,7 +9,7 @@ Creates (get_or_create throughout — safe to re-run):
     pinned address of the fake-cisco container in docker-compose.fake-cisco.yml)
   - Template VPNProfile "Standard-IKEv2-AES256" + Phase 1/2 policies + assignments
   - Hub VPNTunnelEndpoint (device + role "Hub") with protected prefix + crypto map CF
-  - "Planned" and "Decommissioning" statuses mapped to VPNTunnel
+  - "Planned", "Provisioned", "Decommissioning" statuses mapped to VPNTunnel
   - PortalBuildIpsecTunnel Job row enabled (disabled by default on a fresh DB;
     the portal view's enqueue would otherwise fail with RunJobTaskFailed). If
     the Job row hasn't been registered yet (registry not synced), this step
@@ -165,7 +165,7 @@ def _seed_hub_endpoint(device, namespace):
 
 def _seed_tunnel_statuses():
     vpntunnel_ct = ContentType.objects.get_for_model(VPNTunnel)
-    for status_name in ("Planned", "Decommissioning"):
+    for status_name in ("Planned", "Provisioned", "Decommissioning"):
         st, _ = Status.objects.get_or_create(name=status_name)
         st.content_types.add(vpntunnel_ct)
 
@@ -244,7 +244,7 @@ def _main():
     _seed_hub_endpoint(device, global_ns)
     print(f"  hub endpoint:     device={device.name} role=Hub prefix={HUB_PROTECTED_PREFIX}")
     _seed_tunnel_statuses()
-    print("  statuses:         Planned + Decommissioning mapped to VPNTunnel")
+    print("  statuses:         Planned + Provisioned + Decommissioning mapped to VPNTunnel")
     # Service account/token before the Job lookup: if the Job registry hasn't
     # synced yet, _seed_portal_build_job() only prints an error and moves on —
     # it must not be able to abort the run before the token gets created.

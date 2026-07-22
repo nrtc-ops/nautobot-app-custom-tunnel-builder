@@ -157,7 +157,7 @@ def _build_tunnel_objects():
         vpn_id="vpn-nrtc-ms-job-test-jackson-ms-001",
         name="Job Test - Jackson, MS",
     )
-    tunnel_status = Status.objects.get_for_model(VPNTunnel).get(name="Active")
+    tunnel_status = Status.objects.get_for_model(VPNTunnel).get(name="Active")  # starting state for the job under test
     tunnel = VPNTunnel.objects.create(
         name="Job Test - Jackson, MS - 3000",
         tunnel_id="vpn-tunnel-nrtc-ms-job-test-jackson-ms-3000",
@@ -287,11 +287,11 @@ class PortalJobSSHTest(TestCase):
     @patch(SECRET_GET_VALUE_PATH, return_value="TestPSK-Secret-123!")
     @patch(CONNECT_HANDLER_PATH)
     def test_tunnel_status_set_to_active_on_success(self, mock_connect, _mock_secret):
-        """Tunnel status is updated to Active after successful push."""
+        """Tunnel status is updated to Provisioned after successful push."""
         self._run_job(mock_connect, _mock_secret)
 
         self.tunnel.refresh_from_db()
-        self.assertEqual(self.tunnel.status.name, "Active")
+        self.assertEqual(self.tunnel.status.name, "Provisioned")
 
     @patch(SECRET_GET_VALUE_PATH, return_value="TestPSK-Secret-123!")
     @patch(CONNECT_HANDLER_PATH)

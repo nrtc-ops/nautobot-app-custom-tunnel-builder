@@ -494,7 +494,9 @@ class TunnelStatusView(APIView):
         }
 
         profile = tunnel.vpn_profile
-        if tunnel.status.name == "Active" and profile is not None:
+        # "Provisioned" is the canonical post-push status; "Active" is the
+        # legacy name still carried by tunnels built before the rename.
+        if tunnel.status.name in ("Provisioned", "Active") and profile is not None:
             # Guard the one-shot PSK latch with a row lock so two concurrent
             # GETs on a just-activated tunnel can't both read-check-write past
             # the "already retrieved" check and both return the PSK.
