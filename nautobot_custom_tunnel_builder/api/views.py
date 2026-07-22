@@ -36,7 +36,30 @@ def _location_slug(city, state):
     return f"{city.lower().replace(' ', '-')}-{state.lower()}"
 
 
-def _get_or_create_member_device(member_name, location_slug, remote_peer_ip, location_obj):  # pylint: disable=too-many-locals
+def _member_namespace(member_name, tenant):
+    """Per-member IPAM namespace — keeps each member's address space isolated.
+
+    Falls back to the shared "Members" namespace only when no tenant is
+    supplied (legacy callers). Assigning the tenant here is safe on re-runs:
+    get_or_create keys on name, and we set the tenant on first creation.
+    """
+    if tenant is None:
+        ns, _ = Namespace.objects.get_or_create(
+            name="Members",
+            defaults={"description": "Namespace for member VPN endpoint addresses."},
+        )
+        return ns
+    ns, _ = Namespace.objects.get_or_create(
+        name=f"member-{member_name}",
+        defaults={
+            "description": f"IPAM namespace for member '{member_name}'.",
+            "tenant": tenant,
+        },
+    )
+    return ns
+
+
+def _get_or_create_member_device(member_name, location_slug, remote_peer_ip, location_obj, tenant=None):  # pylint: disable=too-many-locals
     """Create or retrieve the member placeholder Device with a per-peer interface and IP."""
     manufacturer, _ = Manufacturer.objects.get_or_create(
         name="Generic",
@@ -58,6 +81,7 @@ def _get_or_create_member_device(member_name, location_slug, remote_peer_ip, loc
             "role": role,
             "location": location_obj,
             "status": device_status,
+            "tenant": tenant,
         },
     )
 
@@ -71,10 +95,7 @@ def _get_or_create_member_device(member_name, location_slug, remote_peer_ip, loc
 
     # Get or create the IP address and assign to the interface
     # Nautobot 3.x requires a parent Prefix for every IPAddress
-    members_ns, _ = Namespace.objects.get_or_create(
-        name="Members",
-        defaults={"description": "Namespace for member VPN endpoint addresses."},
-    )
+    members_ns = _member_namespace(member_name, tenant)
     prefix_status = Status.objects.get_for_model(Prefix).get(name="Active")
     # Create a /24 parent prefix for the member's IP
     import ipaddress as ipaddresslib  # pylint: disable=import-outside-toplevel
@@ -84,7 +105,7 @@ def _get_or_create_member_device(member_name, location_slug, remote_peer_ip, loc
     Prefix.objects.get_or_create(
         prefix=str(parent_network),
         namespace=members_ns,
-        defaults={"status": prefix_status},
+        defaults={"status": prefix_status, "tenant": tenant},
     )
     ip_str = f"{remote_peer_ip}/32"
     ip_address, _ = IPAddress.objects.get_or_create(
@@ -92,6 +113,7 @@ def _get_or_create_member_device(member_name, location_slug, remote_peer_ip, loc
         namespace=members_ns,
         defaults={
             "status": Status.objects.get_for_model(IPAddress).get(name="Active"),
+            "tenant": tenant,
         },
     )
     from nautobot.ipam.models import IPAddressToInterface  # pylint: disable=import-outside-toplevel
@@ -121,11 +143,12 @@ def _get_or_create_location(city, state):
     return location
 
 
-def _clone_vpn_profile(template, name, sequence):
+def _clone_vpn_profile(template, name, sequence, tenant=None):
     """Clone a template VPNProfile into a per-tunnel profile with custom fields."""
     profile = VPNProfile.objects.create(
         name=name,
         description=f"Cloned from template '{template.name}' for portal tunnel.",
+        tenant=tenant,
     )
 
     # Copy Phase 1 policy assignments
@@ -184,17 +207,15 @@ def _allocate_crypto_map_sequence(device):
     return SEQUENCE_FLOOR
 
 
-def _get_or_create_prefix(cidr):
-    """Get or create a Prefix in the Members namespace."""
-    members_ns, _ = Namespace.objects.get_or_create(
-        name="Members",
-        defaults={"description": "Namespace for member VPN protected prefixes."},
-    )
+def _get_or_create_prefix(cidr, member_name, tenant=None):
+    """Get or create a member protected-prefix in the member's namespace."""
+    members_ns = _member_namespace(member_name, tenant)
     prefix, _ = Prefix.objects.get_or_create(
         prefix=cidr,
         namespace=members_ns,
         defaults={
             "status": Status.objects.get_for_model(Prefix).get(name="Active"),
+            "tenant": tenant,
         },
     )
     return prefix
@@ -221,6 +242,7 @@ class PortalTunnelRequestView(APIView):
         state = data["location_state"]
         member_prefix_cidrs = data["member_protected_prefixes"]
         request_id = data["member_connect_request_id"]
+        tenant = data.get("tenant")
 
         loc_slug = _location_slug(city, state)
         display_location = f"{city}, {state.upper()}"
@@ -315,6 +337,7 @@ class PortalTunnelRequestView(APIView):
                     member_prefix_cidrs,
                     vpn_name,
                     request_id,
+                    tenant,
                 )
             except Exception:  # pylint: disable=broad-exception-caught
                 logger.exception("Failed to create tunnel for member '%s'.", member_name)
@@ -377,6 +400,7 @@ class PortalTunnelRequestView(APIView):
         member_prefix_cidrs,
         vpn_name,
         request_id,
+        tenant=None,
     ):
         """Create the full VPN object hierarchy inside an atomic transaction.
 
@@ -399,6 +423,7 @@ class PortalTunnelRequestView(APIView):
                 loc_slug,
                 remote_peer_ip,
                 location_obj,
+                tenant=tenant,
             )
 
             # 3. VPN (get_or_create by member+location)
@@ -406,6 +431,7 @@ class PortalTunnelRequestView(APIView):
                 vpn_id=vpn_name,
                 defaults={
                     "name": f"{member_display} - {display_location}",
+                    "tenant": tenant,
                 },
             )
 
@@ -435,7 +461,7 @@ class PortalTunnelRequestView(APIView):
 
             # 8. Clone template VPNProfile
             profile_name = f"vpnprofile-nrtc-ms-{member_name}-{loc_slug}-{next_seq}"
-            profile = _clone_vpn_profile(template, profile_name, next_seq)
+            profile = _clone_vpn_profile(template, profile_name, next_seq, tenant=tenant)
             profile.secrets_group = tunnel_sg
             profile.save()
 
@@ -449,6 +475,7 @@ class PortalTunnelRequestView(APIView):
                 status=tunnel_status,
                 vpn=vpn,
                 vpn_profile=profile,
+                tenant=tenant,
             )
             tunnel._custom_field_data["member_connect_request_id"] = request_id  # pylint: disable=protected-access
 
@@ -465,7 +492,7 @@ class PortalTunnelRequestView(APIView):
                 source_ipaddress=member_ip,
             )
             for cidr in member_prefix_cidrs:
-                spoke_endpoint.protected_prefixes.add(_get_or_create_prefix(cidr))
+                spoke_endpoint.protected_prefixes.add(_get_or_create_prefix(cidr, member_name, tenant=tenant))
             tunnel.endpoint_a = spoke_endpoint
             tunnel.save()
 

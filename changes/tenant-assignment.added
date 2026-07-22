@@ -1,0 +1,1 @@
+The portal-request contract accepts an optional tenant (Tenant UUID). When present it is assigned to every object the flow creates — member Device, VPN, VPNTunnel, cloned VPNProfile, and all member prefixes/IPs — and each member gets its own IPAM namespace (member-{slug}) instead of the shared Members namespace. Absent tenant keeps legacy behavior.

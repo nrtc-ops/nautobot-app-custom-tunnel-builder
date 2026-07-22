@@ -18,6 +18,7 @@ from nautobot.dcim.models import (
     Platform,
 )
 from nautobot.extras.models import Role, Status
+from nautobot.tenancy.models import Tenant
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 from nautobot.vpn.models import (
     VPN,
@@ -193,6 +194,61 @@ def _valid_payload(device, template_profile, request_id=None):
         "member_protected_prefixes": ["192.168.1.0/24"],
         "member_connect_request_id": request_id or str(uuid.uuid4()),
     }
+
+
+class PortalTunnelTenancyTest(APITestCase):  # pylint: disable=too-many-ancestors
+    """A supplied tenant is assigned to the objects the flow creates, and each
+    member gets its own IPAM namespace."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.device = _create_test_device()
+        cls.template_profile = _create_template_vpn_profile()
+        manufacturer, _ = Manufacturer.objects.get_or_create(name="Generic")
+        DeviceType.objects.get_or_create(model="Member VPN Endpoint", manufacturer=manufacturer)
+        LocationType.objects.get_or_create(name="Site")
+        _create_hub_endpoint(cls.device)
+        _ensure_vpntunnel_statuses()
+        cls.tenant = Tenant.objects.create(name="Acme Corp Tenant")
+
+    def _post(self, url, data=None):
+        return self.client.post(url, data=data or {}, format="json", **self.header)
+
+    @patch(OP_MOCK_PATH, return_value="op-tenancy")
+    def test_supplied_tenant_lands_on_created_objects(self, _mock_op):
+        payload = _valid_payload(self.device, self.template_profile)
+        payload["tenant"] = str(self.tenant.pk)
+        response = self._post(PORTAL_REQUEST_URL, payload)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+
+        tunnel = VPNTunnel.objects.get(pk=response.json()["tunnel_id"])
+        self.assertEqual(tunnel.tenant, self.tenant)
+        self.assertEqual(tunnel.vpn.tenant, self.tenant)
+        self.assertEqual(tunnel.vpn_profile.tenant, self.tenant)
+        member_device = Device.objects.get(name="member-acme-corp-jackson-ms")
+        self.assertEqual(member_device.tenant, self.tenant)
+
+    @patch(OP_MOCK_PATH, return_value="op-tenancy")
+    def test_per_member_namespace_created_with_tenant(self, _mock_op):
+        from nautobot.ipam.models import Namespace  # pylint: disable=import-outside-toplevel
+
+        payload = _valid_payload(self.device, self.template_profile)
+        payload["tenant"] = str(self.tenant.pk)
+        self._post(PORTAL_REQUEST_URL, payload)
+
+        ns = Namespace.objects.get(name="member-acme-corp")
+        self.assertEqual(ns.tenant, self.tenant)
+        member_ip_prefix = ns.prefixes.filter(prefix="203.0.113.0/24").first()
+        self.assertIsNotNone(member_ip_prefix, "member IP parent prefix should live in the member namespace")
+        self.assertIsNotNone(ns.prefixes.filter(prefix="192.168.1.0/24").first())
+
+    @patch(OP_MOCK_PATH, return_value="op-tenancy")
+    def test_tenant_omitted_keeps_legacy_behavior(self, _mock_op):
+        payload = _valid_payload(self.device, self.template_profile)
+        response = self._post(PORTAL_REQUEST_URL, payload)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        tunnel = VPNTunnel.objects.get(pk=response.json()["tunnel_id"])
+        self.assertIsNone(tunnel.tenant)
 
 
 # ---------------------------------------------------------------------------
