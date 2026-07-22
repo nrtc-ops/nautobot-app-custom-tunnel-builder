@@ -24,6 +24,7 @@ from rest_framework.response import Response
 from rest_framework.reverse import reverse
 from rest_framework.views import APIView
 
+from ..mapping import profile_to_config_params
 from ..onepassword_utils import get_secret_provider_params, store_psk_in_1password
 from .serializers import PortalTunnelRequestSerializer
 
@@ -471,6 +472,57 @@ class PortalTunnelRequestView(APIView):
         return tunnel, vpn
 
 
+def _config_summary(tunnel):
+    """Non-secret configuration summary for the member-facing package.
+
+    Derived through profile_to_config_params — the same translation the build
+    job renders device config from — so the summary cannot drift from what was
+    pushed. Returns None when the tunnel is missing the objects it needs.
+    """
+    hub = tunnel.endpoint_z
+    spoke = tunnel.endpoint_a
+    profile = tunnel.vpn_profile
+    if not hub or not profile:
+        return None
+    try:
+        sequence = profile._custom_field_data.get("custom_tunnel_builder_crypto_map_sequence") or 0  # pylint: disable=protected-access
+        hub_prefixes = [str(p.prefix) for p in hub.protected_prefixes.all()]
+        params = profile_to_config_params(
+            vpn_profile=profile,
+            remote_peer_ip=str(spoke.source_ipaddress.address.ip) if spoke and spoke.source_ipaddress else "",
+            local_network_cidr=hub_prefixes[0] if hub_prefixes else "",
+            protected_network_cidr="",
+            crypto_map_name="",
+            sequence=sequence,
+        )
+    except (ValueError, KeyError):
+        logger.exception("Could not derive config summary for tunnel '%s'.", tunnel.name)
+        return None
+
+    phase1 = {
+        "ike_version": params["ike_version"],
+        "dh_group": params["ike_dh_group"],
+        "lifetime": params["ike_lifetime"],
+    }
+    if params["ike_version"] == "ikev2":
+        phase1["encryption"] = params["ikev2_encryption"]
+        phase1["integrity"] = params["ikev2_integrity"]
+    else:
+        phase1["encryption"] = params["ikev1_encryption"]
+        phase1["integrity"] = params["ikev1_hash"]
+
+    return {
+        "hub_peer_ip": str(hub.source_ipaddress.address.ip) if hub.source_ipaddress else None,
+        "hub_protected_prefixes": hub_prefixes,
+        "phase1": phase1,
+        "phase2": {
+            "encryption": params["ipsec_encryption"],
+            "integrity": params["ipsec_integrity"],
+            "lifetime": params["ipsec_lifetime"],
+        },
+    }
+
+
 class TunnelStatusView(APIView):
     """Return the current status of a portal-created VPN tunnel."""
 
@@ -492,6 +544,11 @@ class TunnelStatusView(APIView):
             "tunnel_name": tunnel.name,
             "status": tunnel.status.name,
         }
+
+        if tunnel.status.name in ("Provisioned", "Active"):
+            summary = _config_summary(tunnel)
+            if summary:
+                payload["config_summary"] = summary
 
         profile = tunnel.vpn_profile
         # "Provisioned" is the canonical post-push status; "Active" is the

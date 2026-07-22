@@ -711,6 +711,32 @@ class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
         self.assertIn("pre_shared_key", data)
         self.assertEqual(data["pre_shared_key"], "TestPSKReturnedOnce!")
 
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-summary")
+    @patch("nautobot.extras.models.Secret.get_value", return_value="SummaryPSK!")
+    def test_provisioned_tunnel_includes_config_summary(self, _mock_get_value, _mock_op):
+        """Provisioned status responses carry the non-secret config_summary block."""
+        tunnel_id = self._post_tunnel("summary-member", "203.0.113.90")
+        self._activate(tunnel_id)
+        data = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id)).json()
+        summary = data.get("config_summary")
+        self.assertIsNotNone(summary, "config_summary missing from Provisioned response")
+        self.assertEqual(summary["hub_peer_ip"], "10.1.1.1")
+        self.assertEqual(summary["hub_protected_prefixes"], ["10.100.0.0/24"])
+        p1, p2 = summary["phase1"], summary["phase2"]
+        self.assertEqual(p1["ike_version"], "ikev2")
+        for key in ("encryption", "integrity", "dh_group", "lifetime"):
+            self.assertIn(key, p1)
+        for key in ("encryption", "integrity", "lifetime"):
+            self.assertIn(key, p2)
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-summary")
+    @patch("nautobot.extras.models.Secret.get_value", return_value="SummaryPSK!")
+    def test_planned_tunnel_has_no_config_summary(self, _mock_get_value, _mock_op):
+        """Config summary only appears once the tunnel is provisioned."""
+        tunnel_id = self._post_tunnel("summary-planned-member", "203.0.113.91")
+        data = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id)).json()
+        self.assertNotIn("config_summary", data)
+
     @patch(OP_MOCK_PATH, return_value="fake-op-item-id-psk-test")
     @patch("nautobot.extras.models.Secret.get_value", return_value="TestPSKReturnedOnce!")
     def test_planned_tunnel_does_not_include_psk(self, _mock_get_value, _mock_op):
