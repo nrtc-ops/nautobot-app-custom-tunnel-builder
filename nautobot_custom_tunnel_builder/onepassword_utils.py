@@ -95,6 +95,39 @@ def get_secret_provider_params(op_item_id):
     return "one-password", {"vault": os.environ.get("OP_VAULT_UUID", ""), "item": op_item_id, "field": "password"}
 
 
+def delete_psk_from_1password(op_item_id):
+    """Delete the 1Password item holding a tunnel's PSK (used on teardown).
+
+    Best-effort: callers treat failure as non-fatal and log it, since an
+    orphaned secret is preferable to a failed teardown. In dev bypass mode the
+    backing temp file is removed instead.
+    """
+    if not op_item_id:
+        return
+    if _dev_bypass_enabled():
+        path = os.path.join(_DEV_PSK_DIR, op_item_id)
+        if os.path.exists(path):  # noqa: PTH110
+            os.remove(path)  # noqa: PTH107
+            logger.warning("DEV BYPASS: removed PSK temp file %s", path)
+        return
+    asyncio.run(_delete_op_item(op_item_id))
+
+
+async def _delete_op_item(op_item_id):
+    """Async helper to delete a 1Password item via the SDK."""
+    from onepassword import Client  # pylint: disable=import-outside-toplevel,import-error
+
+    from . import __version__  # pylint: disable=import-outside-toplevel
+
+    op_client = await Client.authenticate(
+        auth=OP_SERVICE_ACCOUNT_TOKEN,
+        integration_name="nautobot-custom-tunnel-builder",
+        integration_version=__version__,
+    )
+    logger.info("Deleting 1Password item '%s' from vault '%s'.", op_item_id, OP_VAULT_UUID)
+    await op_client.items.delete(OP_VAULT_UUID, op_item_id)
+
+
 def _store_psk_dev_bypass(psk, member_name, location_slug, sequence):
     """Dev bypass: write PSK to a temp file, return a stable item ID."""
     os.makedirs(_DEV_PSK_DIR, exist_ok=True)

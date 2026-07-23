@@ -196,6 +196,19 @@ def _valid_payload(device, template_profile, request_id=None):
     }
 
 
+def _ensure_member_role():
+    """The 'Member' role, scoped to the VPN objects the flow stamps with it.
+
+    Mirrors what the portal bootstrap guarantees in a real deployment.
+    """
+    from django.contrib.contenttypes.models import ContentType  # pylint: disable=import-outside-toplevel
+
+    role, _ = Role.objects.get_or_create(name="Member")
+    for model in (VPN, VPNTunnel, VPNTunnelEndpoint):
+        role.content_types.add(ContentType.objects.get_for_model(model))
+    return role
+
+
 class PortalTunnelTenancyTest(APITestCase):  # pylint: disable=too-many-ancestors
     """A supplied tenant is assigned to the objects the flow creates, and each
     member gets its own IPAM namespace."""
@@ -209,6 +222,7 @@ class PortalTunnelTenancyTest(APITestCase):  # pylint: disable=too-many-ancestor
         LocationType.objects.get_or_create(name="Site")
         _create_hub_endpoint(cls.device)
         _ensure_vpntunnel_statuses()
+        _ensure_member_role()
         cls.tenant = Tenant.objects.create(name="Acme Corp Tenant")
 
     def setUp(self):
@@ -229,6 +243,8 @@ class PortalTunnelTenancyTest(APITestCase):  # pylint: disable=too-many-ancestor
         self.assertEqual(tunnel.tenant, self.tenant)
         self.assertEqual(tunnel.vpn.tenant, self.tenant)
         self.assertEqual(tunnel.vpn_profile.tenant, self.tenant)
+        # The spoke endpoint is created by the flow, so it carries the tenant too.
+        self.assertEqual(tunnel.endpoint_a.tenant, self.tenant)
         member_device = Device.objects.get(name="member-acme-corp-jackson-ms")
         self.assertEqual(member_device.tenant, self.tenant)
 
@@ -405,6 +421,7 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
         # Pre-configure hub endpoint with protected prefix (required before portal can provision)
         _create_hub_endpoint(cls.device)
         _ensure_vpntunnel_statuses()
+        _ensure_member_role()
 
     def setUp(self):
         super().setUp()
@@ -449,6 +466,16 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
         self.assertEqual(tunnel.vpn, vpn)
         self.assertIn("Acme Corp - Jackson, MS - 3000", tunnel.name)
 
+        # Enrichment: Member Connect fills in the modeling fields it can.
+        self.assertEqual(vpn.role.name, "Member")
+        self.assertEqual(vpn.vpn_profile, tunnel.vpn_profile)
+        self.assertEqual(vpn._custom_field_data.get("managed_by"), "member-connect")  # pylint: disable=protected-access
+        self.assertEqual(tunnel.role.name, "Member")
+        self.assertEqual(tunnel.encapsulation, "IPsec-Tunnel")
+        self.assertEqual(tunnel._custom_field_data.get("managed_by"), "member-connect")  # pylint: disable=protected-access
+        self.assertEqual(tunnel.endpoint_a.role.name, "Member")
+        self.assertEqual(tunnel.endpoint_a.vpn_profile, tunnel.vpn_profile)
+
         # Verify VPNProfile cloned (not the template)
         profile = tunnel.vpn_profile
         self.assertNotEqual(profile.pk, self.template_profile.pk)
@@ -487,6 +514,22 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
 
         # Verify 1Password was called
         _mock_op.assert_called_once()
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-no-role")
+    def test_provisioning_succeeds_when_member_role_unscoped(self, _mock_op):
+        """Provisioning must not depend on the content-type bootstrap having run:
+        an unscoped Member role is still assigned to the objects it stamps."""
+        Role.objects.get(name="Member").content_types.clear()
+        payload = _valid_payload(self.device, self.template_profile)
+        payload["remote_peer_ip"] = "203.0.113.77"
+        response = self._post(PORTAL_REQUEST_URL, payload)
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        tunnel = VPNTunnel.objects.get(pk=response.json()["tunnel_id"])
+        self.assertEqual(tunnel.role.name, "Member")
+        self.assertEqual(tunnel.vpn.role.name, "Member")
+        self.assertEqual(tunnel.encapsulation, "IPsec-Tunnel")
+        self.assertEqual(tunnel._custom_field_data.get("managed_by"), "member-connect")  # pylint: disable=protected-access
 
     @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
     def test_202_response_pins_full_contract_body(self, _mock_op):
@@ -819,6 +862,9 @@ class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
         self.assertIsNotNone(summary, "config_summary missing from Provisioned response")
         self.assertEqual(summary["hub_peer_ip"], "10.1.1.1")
         self.assertEqual(summary["hub_protected_prefixes"], ["10.100.0.0/24"])
+        # Encapsulation + protocol are presented to the member alongside the phases.
+        self.assertEqual(summary["encapsulation"], "IPsec-Tunnel")
+        self.assertEqual(summary["protocol"], "ESP")
         p1, p2 = summary["phase1"], summary["phase2"]
         self.assertEqual(p1["ike_version"], "ikev2")
         for key in ("encryption", "integrity", "dh_group", "lifetime"):
@@ -1127,3 +1173,104 @@ class EndToEndConfigGenerationTest(APITestCase):  # pylint: disable=too-many-anc
         resolved_device = assignment.interface.device
         self.assertEqual(resolved_device.pk, self.device.pk)
         self.assertEqual(resolved_device.name, "csr-vpn-router")
+
+
+TEARDOWN_URL_TEMPLATE = "/plugins/tunnel-builder/api/portal-request/{}/"
+OP_DELETE_PATH = "nautobot_custom_tunnel_builder.api.views.delete_psk_from_1password"
+
+
+class PortalTunnelTeardownTest(APITestCase):  # pylint: disable=too-many-ancestors
+    """DELETE tears down a member-connect tunnel and its private objects,
+    reaping the shared VPN/Device only when empty, and refusing cross-system."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.device = _create_test_device()
+        cls.template_profile = _create_template_vpn_profile()
+        manufacturer, _ = Manufacturer.objects.get_or_create(name="Generic")
+        DeviceType.objects.get_or_create(model="Member VPN Endpoint", manufacturer=manufacturer)
+        LocationType.objects.get_or_create(name="Site")
+        _create_hub_endpoint(cls.device)
+        _ensure_vpntunnel_statuses()
+        _ensure_member_role()
+
+    def setUp(self):
+        super().setUp()
+        self.add_permissions("vpn.add_vpntunnel", "vpn.delete_vpntunnel")
+
+    def _post(self, url, data=None):
+        return self.client.post(url, data=data or {}, format="json", **self.header)
+
+    def _provision(self, peer, rid=None):
+        payload = _valid_payload(self.device, self.template_profile, request_id=rid)
+        payload["remote_peer_ip"] = peer
+        resp = self._post(PORTAL_REQUEST_URL, payload)
+        self.assertEqual(resp.status_code, status.HTTP_202_ACCEPTED, resp.content)
+        return resp.json()["tunnel_id"]
+
+    @patch(OP_DELETE_PATH)
+    @patch(OP_MOCK_PATH, return_value="op-item-teardown")
+    def test_teardown_removes_tunnel_and_private_objects(self, _mock_op, mock_del):
+        tid = self._provision("203.0.113.70")
+        tunnel = VPNTunnel.objects.get(pk=tid)
+        vpn_pk, profile_pk, spoke_pk = tunnel.vpn_id, tunnel.vpn_profile_id, tunnel.endpoint_a_id
+        sg = tunnel.vpn_profile.secrets_group
+        sg_pk = sg.pk
+        hub_pk = tunnel.endpoint_z_id
+
+        resp = self.client.delete(TEARDOWN_URL_TEMPLATE.format(tid), **self.header)
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.content)
+        self.assertFalse(VPNTunnel.objects.filter(pk=tid).exists())
+        self.assertFalse(VPNProfile.objects.filter(pk=profile_pk).exists())
+        self.assertFalse(VPNTunnelEndpoint.objects.filter(pk=spoke_pk).exists())
+        self.assertFalse(VPN.objects.filter(pk=vpn_pk).exists(), "VPN should be reaped (last tunnel)")
+        from nautobot.extras.models import SecretsGroup  # pylint: disable=import-outside-toplevel
+
+        self.assertFalse(SecretsGroup.objects.filter(pk=sg_pk).exists())
+        # Hub endpoint (shared NRTC infra) must survive.
+        self.assertTrue(VPNTunnelEndpoint.objects.filter(pk=hub_pk).exists())
+        # 1Password item deleted (best-effort external call).
+        mock_del.assert_called_once_with("op-item-teardown")
+
+    @patch(OP_DELETE_PATH)
+    @patch(OP_MOCK_PATH, return_value="op-item-shared")
+    def test_teardown_keeps_shared_vpn_and_device_when_another_tunnel_exists(self, _mock_op, _mock_del):
+        tid1 = self._provision("203.0.113.71")
+        tid2 = self._provision("203.0.113.72")
+        vpn_pk = VPNTunnel.objects.get(pk=tid1).vpn_id
+        device_pk = VPNTunnel.objects.get(pk=tid1).endpoint_a.device_id
+
+        resp = self.client.delete(TEARDOWN_URL_TEMPLATE.format(tid1), **self.header)
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.content)
+        self.assertFalse(VPNTunnel.objects.filter(pk=tid1).exists())
+        self.assertTrue(VPNTunnel.objects.filter(pk=tid2).exists())
+        self.assertTrue(VPN.objects.filter(pk=vpn_pk).exists(), "VPN shared with tunnel 2 must survive")
+        self.assertTrue(Device.objects.filter(pk=device_pk).exists(), "Device shared with tunnel 2 must survive")
+
+    @patch(OP_DELETE_PATH)
+    @patch(OP_MOCK_PATH, return_value="op-item-xsys")
+    def test_teardown_refuses_cross_system_tunnel(self, _mock_op, mock_del):
+        tid = self._provision("203.0.113.73")
+        tunnel = VPNTunnel.objects.get(pk=tid)
+        tunnel._custom_field_data["managed_by"] = "custom-tunnel-builder"  # pylint: disable=protected-access
+        tunnel.save()
+
+        resp = self.client.delete(TEARDOWN_URL_TEMPLATE.format(tid), **self.header)
+
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertTrue(VPNTunnel.objects.filter(pk=tid).exists(), "must not delete another system's tunnel")
+        mock_del.assert_not_called()
+
+    @patch(OP_DELETE_PATH)
+    @patch(OP_MOCK_PATH, return_value="op-item-perm")
+    def test_teardown_requires_delete_permission(self, _mock_op, _mock_del):
+        tid = self._provision("203.0.113.74")
+        self.user.object_permissions.clear()
+        self.user.refresh_from_db()
+
+        resp = self.client.delete(TEARDOWN_URL_TEMPLATE.format(tid), **self.header)
+
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertTrue(VPNTunnel.objects.filter(pk=tid).exists())

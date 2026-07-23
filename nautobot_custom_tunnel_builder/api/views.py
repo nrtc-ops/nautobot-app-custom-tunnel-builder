@@ -25,7 +25,7 @@ from rest_framework.reverse import reverse
 from rest_framework.views import APIView
 
 from ..mapping import profile_to_config_params
-from ..onepassword_utils import get_secret_provider_params, store_psk_in_1password
+from ..onepassword_utils import delete_psk_from_1password, get_secret_provider_params, store_psk_in_1password
 from .serializers import PortalTunnelRequestSerializer
 
 logger = logging.getLogger(__name__)
@@ -34,6 +34,116 @@ logger = logging.getLogger(__name__)
 def _location_slug(city, state):
     """Compose a location slug from city and state."""
     return f"{city.lower().replace(' ', '-')}-{state.lower()}"
+
+
+def _member_role():
+    """The 'Member' role, or None if it hasn't been bootstrapped yet.
+
+    Defensive: provisioning must not fail just because the role is absent —
+    we set it when present and leave the field null otherwise. The portal
+    bootstrap scopes this role to the VPN object types before members are
+    exposed.
+    """
+    return Role.objects.filter(name="Member").first()
+
+
+# The custom field recording which system owns (created and may tear down) an
+# object, and the value the portal path stamps. Teardown callers act as a
+# system and may only delete what that system manages.
+MANAGED_BY_CF = "managed_by"
+MEMBER_CONNECT_SYSTEM = "member-connect"
+
+
+class TunnelNotOwned(Exception):
+    """Raised when a teardown caller's system does not own the target tunnel."""
+
+
+def _teardown_tunnel(tunnel, as_system):
+    """Delete a tunnel and its private objects, reaping shared parents when empty.
+
+    Reaps the shared VPN/Device only when this was their last tunnel. The
+    caller acts as ``as_system``; a tunnel whose ``managed_by`` differs is
+    refused (TunnelNotOwned) so one system can never tear down another's — or a
+    hand-built, unmanaged — objects. Identity objects (tenant, contact) and the
+    shared hub endpoint are never touched. 1Password deletion happens after the
+    DB transaction commits (external, best-effort).
+    """
+    if tunnel._custom_field_data.get(MANAGED_BY_CF) != as_system:  # pylint: disable=protected-access
+        raise TunnelNotOwned(f"tunnel '{tunnel.name}' is not managed by '{as_system}'")
+
+    from nautobot.ipam.models import IPAddressToInterface  # pylint: disable=import-outside-toplevel
+
+    deleted = []
+    vpn = tunnel.vpn
+    spoke = tunnel.endpoint_a
+    profile = tunnel.vpn_profile
+    device = spoke.device if spoke else None
+    peer_ip = spoke.source_ipaddress if spoke else None
+    secrets_group = profile.secrets_group if profile else None
+
+    # Resolve the 1Password item id from the secret before deleting it.
+    op_item_id = None
+    if secrets_group and secrets_group.secrets.exists():
+        params = secrets_group.secrets.first().parameters or {}
+        op_item_id = params.get("item") or (params.get("path") or "").rsplit("/", 1)[-1] or None
+
+    with transaction.atomic():
+        # Tunnel first — clears its FKs to vpn / profile / endpoints.
+        tunnel.delete()
+        deleted.append("vpntunnel")
+        if spoke:
+            spoke.delete()
+            deleted.append("vpntunnelendpoint")
+
+        # The parent VPN holds a PROTECT FK to a profile, so resolve it before
+        # deleting this tunnel's profile: reap the VPN when this was its last
+        # tunnel, otherwise repoint it at a surviving tunnel's profile.
+        if vpn and not vpn.vpn_tunnels.exists():
+            vpn.delete()
+            deleted.append("vpn")
+        elif vpn and profile and vpn.vpn_profile_id == profile.pk:
+            surviving = vpn.vpn_tunnels.first()
+            vpn.vpn_profile = surviving.vpn_profile if surviving else None
+            vpn.save()
+
+        if profile:
+            profile.delete()
+            deleted.append("vpnprofile")
+        if secrets_group:
+            for secret in list(secrets_group.secrets.all()):
+                secret.delete()
+                deleted.append("secret")
+            secrets_group.delete()
+            deleted.append("secretsgroup")
+
+        # Peer IP + its per-peer interface (private to this tunnel's peer).
+        if peer_ip:
+            interfaces = [a.interface for a in IPAddressToInterface.objects.filter(ip_address=peer_ip)]
+            IPAddressToInterface.objects.filter(ip_address=peer_ip).delete()
+            peer_ip.delete()
+            deleted.append("ipaddress")
+            for intf in interfaces:
+                if not IPAddressToInterface.objects.filter(interface=intf).exists():
+                    intf.delete()
+                    deleted.append("interface")
+
+        # Reap the member device once no endpoints or interfaces remain on it.
+        if (
+            device
+            and not VPNTunnelEndpoint.objects.filter(device=device).exists()
+            and not Interface.objects.filter(device=device).exists()
+        ):
+            device.delete()
+            deleted.append("device")
+
+    if op_item_id:
+        try:
+            delete_psk_from_1password(op_item_id)
+            deleted.append("1password-item")
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("Teardown: failed to delete 1Password item '%s' (now orphaned).", op_item_id)
+
+    return {"deleted": deleted}
 
 
 def _member_namespace(member_name, tenant):
@@ -438,14 +548,20 @@ class PortalTunnelRequestView(APIView):
                 tenant=tenant,
             )
 
-            # 3. VPN (get_or_create by member+location)
-            vpn, _ = VPN.objects.get_or_create(
+            # 3. VPN (get_or_create by member+location) — the top-level
+            # Member-Connect-owned object; stamped managed for teardown.
+            member_role = _member_role()
+            vpn, vpn_created = VPN.objects.get_or_create(
                 vpn_id=vpn_name,
                 defaults={
                     "name": f"{member_display} - {display_location}",
                     "tenant": tenant,
+                    "role": member_role,
                 },
             )
+            if vpn_created:
+                vpn._custom_field_data["managed_by"] = "member-connect"  # pylint: disable=protected-access
+                vpn.save()
 
             # 4. Allocate the next crypto map sequence (advisory-locked, floor 3000).
             next_seq = _allocate_crypto_map_sequence(device)
@@ -490,6 +606,12 @@ class PortalTunnelRequestView(APIView):
             profile.secrets_group = tunnel_sg
             profile.save()
 
+            # Point the VPN at this profile on first creation (a reused VPN keeps
+            # the profile from its first tunnel).
+            if vpn_created and not vpn.vpn_profile:
+                vpn.vpn_profile = profile
+                vpn.save()
+
             # 9. Create VPNTunnel — born Planned.
             tunnel_name = f"{member_display} - {display_location} - {next_seq}"
             tunnel_id_str = f"vpn-tunnel-nrtc-ms-{member_name}-{loc_slug}-{next_seq}"
@@ -501,20 +623,25 @@ class PortalTunnelRequestView(APIView):
                 vpn=vpn,
                 vpn_profile=profile,
                 tenant=tenant,
+                role=member_role,
+                encapsulation="IPsec-Tunnel",
             )
             tunnel._custom_field_data["member_connect_request_id"] = request_id  # pylint: disable=protected-access
+            tunnel._custom_field_data["managed_by"] = "member-connect"  # pylint: disable=protected-access
 
             # 10. Attach the pre-configured hub endpoint (endpoint_z).
             tunnel.endpoint_z = hub_endpoint
 
             # 11. Spoke VPNTunnelEndpoint (endpoint_a) — one protected prefix
             # association per entry in member_protected_prefixes.
-            spoke_role, _ = Role.objects.get_or_create(name="Spoke")
+            spoke_role = member_role or Role.objects.get_or_create(name="Spoke")[0]
             spoke_endpoint = VPNTunnelEndpoint.objects.create(
                 name=f"{member_name}-{loc_slug}",
                 role=spoke_role,
                 device=member_device,
                 source_ipaddress=member_ip,
+                vpn_profile=profile,
+                tenant=tenant,
             )
             for cidr in member_prefix_cidrs:
                 spoke_endpoint.protected_prefixes.add(_get_or_create_prefix(cidr, member_name, tenant=tenant))
@@ -566,6 +693,10 @@ def _config_summary(tunnel):
     return {
         "hub_peer_ip": str(hub.source_ipaddress.address.ip) if hub.source_ipaddress else None,
         "hub_protected_prefixes": hub_prefixes,
+        # Encapsulation as modeled on the tunnel; protocol is always ESP for the
+        # IPsec transforms this flow builds. Both are surfaced to the member.
+        "encapsulation": tunnel.encapsulation or "IPsec-Tunnel",
+        "protocol": "ESP",
         "phase1": phase1,
         "phase2": {
             "encryption": params["ipsec_encryption"],
@@ -632,3 +763,35 @@ class TunnelStatusView(APIView):
                             locked_profile.save(update_fields=["_custom_field_data"])
 
         return Response(payload)
+
+
+class PortalTunnelTeardownView(APIView):
+    """Tear down a Member-Connect-managed tunnel and its private objects.
+
+    This is the Member Connect teardown surface, so it acts as the
+    ``member-connect`` system: it will only remove tunnels that system manages.
+    A tunnel managed by another system — or none — returns the same 404 as a
+    missing tunnel, so the endpoint never leaks or touches what it doesn't own.
+    """
+
+    authentication_classes = [TokenAuthentication, SessionAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, tunnel_id):
+        """Delete the tunnel if the caller may delete VPNTunnels and it is ours."""
+        if not request.user.has_perm("vpn.delete_vpntunnel"):
+            return Response(
+                {"detail": "You do not have permission to delete tunnels."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            tunnel = VPNTunnel.objects.restrict(request.user, "delete").get(pk=tunnel_id)
+        except VPNTunnel.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            summary = _teardown_tunnel(tunnel, as_system=MEMBER_CONNECT_SYSTEM)
+        except TunnelNotOwned:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response({"tunnel_id": str(tunnel_id), **summary}, status=status.HTTP_200_OK)
