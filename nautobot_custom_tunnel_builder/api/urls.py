@@ -2,7 +2,7 @@
 
 from django.urls import path
 
-from .views import PortalTunnelRequestView, TunnelStatusView
+from .views import PortalTunnelRequestView, PortalTunnelTeardownView, TunnelStatusView
 
 app_name = "nautobot_custom_tunnel_builder"
 
@@ -16,5 +16,10 @@ urlpatterns = [
         "tunnel-status/<uuid:tunnel_id>/",
         TunnelStatusView.as_view(),
         name="tunnel-status",
+    ),
+    path(
+        "portal-request/<uuid:tunnel_id>/",
+        PortalTunnelTeardownView.as_view(),
+        name="portal-teardown",
     ),
 ]
