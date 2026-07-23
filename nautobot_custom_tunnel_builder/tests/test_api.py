@@ -171,11 +171,11 @@ def _create_hub_endpoint(device, hub_prefix_cidr="10.100.0.0/24"):
 
 
 def _ensure_vpntunnel_statuses():
-    """Ensure Planned and Decommissioning statuses are mapped to VPNTunnel."""
+    """Ensure Planned, Provisioned, and Decommissioning statuses are mapped to VPNTunnel."""
     from django.contrib.contenttypes.models import ContentType  # pylint: disable=import-outside-toplevel
 
     vpntunnel_ct = ContentType.objects.get_for_model(VPNTunnel)
-    for status_name in ("Planned", "Decommissioning"):
+    for status_name in ("Planned", "Provisioned", "Decommissioning"):
         st, _ = Status.objects.get_or_create(name=status_name)
         st.content_types.add(vpntunnel_ct)
 
@@ -626,7 +626,7 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
 
     @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
     def test_tunnel_created_with_planned_status(self, _mock_op):
-        """New tunnels are born Planned; the build job flips them Active."""
+        """New tunnels are born Planned; the build job flips them Provisioned."""
         payload = _valid_payload(self.device, self.template_profile)
         response = self._post(PORTAL_REQUEST_URL, payload)
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
@@ -685,9 +685,9 @@ class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
 
     @staticmethod
     def _activate(tunnel_id):
-        """Simulate a successful PortalBuildIpsecTunnel run: flip Planned → Active."""
+        """Simulate a successful PortalBuildIpsecTunnel run: flip Planned → Provisioned."""
         tunnel = VPNTunnel.objects.get(pk=tunnel_id)
-        tunnel.status = Status.objects.get_for_model(VPNTunnel).get(name="Active")
+        tunnel.status = Status.objects.get_for_model(VPNTunnel).get(name="Provisioned")
         tunnel.save()
 
     def test_non_existent_tunnel_returns_404(self):
@@ -701,13 +701,13 @@ class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
     @patch(OP_MOCK_PATH, return_value="fake-op-item-id-psk-test")
     @patch("nautobot.extras.models.Secret.get_value", return_value="TestPSKReturnedOnce!")
     def test_active_tunnel_returns_psk(self, _mock_get_value, _mock_op):
-        """Status endpoint returns pre_shared_key when tunnel is Active."""
+        """Status endpoint returns pre_shared_key when tunnel is Provisioned."""
         tunnel_id = self._post_tunnel("psk-test-member", "203.0.113.77")
         self._activate(tunnel_id)
         response = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
-        self.assertEqual(data["status"], "Active")
+        self.assertEqual(data["status"], "Provisioned")
         self.assertIn("pre_shared_key", data)
         self.assertEqual(data["pre_shared_key"], "TestPSKReturnedOnce!")
 
@@ -725,7 +725,7 @@ class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
     @patch(OP_MOCK_PATH, return_value="fake-op-item-id-psk-test")
     @patch("nautobot.extras.models.Secret.get_value", return_value="TestPSKReturnedOnce!")
     def test_first_active_poll_flips_psk_retrieved_flag(self, _mock_get_value, _mock_op):
-        """The first Active poll sets custom_tunnel_builder_psk_retrieved on the profile."""
+        """The first Provisioned poll sets custom_tunnel_builder_psk_retrieved on the profile."""
         tunnel_id = self._post_tunnel("psk-flip-member", "203.0.113.79")
         self._activate(tunnel_id)
         response = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id))
@@ -739,7 +739,7 @@ class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
     @patch(OP_MOCK_PATH, return_value="fake-op-item-id-psk-test")
     @patch("nautobot.extras.models.Secret.get_value", return_value="TestPSKReturnedOnce!")
     def test_second_poll_omits_psk(self, _mock_get_value, _mock_op):
-        """The PSK is offered exactly once; the second Active poll omits it."""
+        """The PSK is offered exactly once; the second Provisioned poll omits it."""
         tunnel_id = self._post_tunnel("psk-once-member", "203.0.113.80")
         self._activate(tunnel_id)
         first = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id))
@@ -747,7 +747,7 @@ class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
         second = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id))
         self.assertEqual(second.status_code, status.HTTP_200_OK)
         data = second.json()
-        self.assertEqual(data["status"], "Active")
+        self.assertEqual(data["status"], "Provisioned")
         self.assertNotIn("pre_shared_key", data)
 
     @patch(OP_MOCK_PATH, return_value="fake-op-item-id-psk-test")
@@ -764,7 +764,7 @@ class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
             response = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
-        self.assertEqual(data["status"], "Active")
+        self.assertEqual(data["status"], "Provisioned")
         self.assertNotIn("pre_shared_key", data)
 
         tunnel = VPNTunnel.objects.get(pk=tunnel_id)
@@ -777,7 +777,7 @@ class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
             response2 = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id))
         self.assertEqual(response2.status_code, status.HTTP_200_OK)
         data2 = response2.json()
-        self.assertEqual(data2["status"], "Active")
+        self.assertEqual(data2["status"], "Provisioned")
         self.assertIn("pre_shared_key", data2)
         self.assertEqual(data2["pre_shared_key"], "RecoveredAfterOutage!")
 

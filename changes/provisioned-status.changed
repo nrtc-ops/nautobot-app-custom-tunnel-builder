@@ -1,0 +1,1 @@
+Changed the post-push VPNTunnel status from Active to Provisioned — configured on the NRTC side and ready to be brought up, with no operational claim. The tunnel-status PSK latch accepts legacy Active tunnels during rollout; seed-e2e creates the Provisioned status; the build job self-heals it on fresh installs.
