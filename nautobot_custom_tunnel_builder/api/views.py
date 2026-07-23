@@ -36,6 +36,17 @@ def _location_slug(city, state):
     return f"{city.lower().replace(' ', '-')}-{state.lower()}"
 
 
+def _member_role():
+    """The 'Member' role, or None if it hasn't been bootstrapped yet.
+
+    Defensive: provisioning must not fail just because the role is absent —
+    we set it when present and leave the field null otherwise. The portal
+    bootstrap scopes this role to the VPN object types before members are
+    exposed.
+    """
+    return Role.objects.filter(name="Member").first()
+
+
 def _member_namespace(member_name, tenant):
     """Per-member IPAM namespace — keeps each member's address space isolated.
 
@@ -438,14 +449,20 @@ class PortalTunnelRequestView(APIView):
                 tenant=tenant,
             )
 
-            # 3. VPN (get_or_create by member+location)
-            vpn, _ = VPN.objects.get_or_create(
+            # 3. VPN (get_or_create by member+location) — the top-level
+            # Member-Connect-owned object; stamped managed for teardown.
+            member_role = _member_role()
+            vpn, vpn_created = VPN.objects.get_or_create(
                 vpn_id=vpn_name,
                 defaults={
                     "name": f"{member_display} - {display_location}",
                     "tenant": tenant,
+                    "role": member_role,
                 },
             )
+            if vpn_created:
+                vpn._custom_field_data["member_connect_managed"] = True  # pylint: disable=protected-access
+                vpn.save()
 
             # 4. Allocate the next crypto map sequence (advisory-locked, floor 3000).
             next_seq = _allocate_crypto_map_sequence(device)
@@ -490,6 +507,12 @@ class PortalTunnelRequestView(APIView):
             profile.secrets_group = tunnel_sg
             profile.save()
 
+            # Point the VPN at this profile on first creation (a reused VPN keeps
+            # the profile from its first tunnel).
+            if vpn_created and not vpn.vpn_profile:
+                vpn.vpn_profile = profile
+                vpn.save()
+
             # 9. Create VPNTunnel — born Planned.
             tunnel_name = f"{member_display} - {display_location} - {next_seq}"
             tunnel_id_str = f"vpn-tunnel-nrtc-ms-{member_name}-{loc_slug}-{next_seq}"
@@ -501,20 +524,25 @@ class PortalTunnelRequestView(APIView):
                 vpn=vpn,
                 vpn_profile=profile,
                 tenant=tenant,
+                role=member_role,
+                encapsulation="IPsec-Tunnel",
             )
             tunnel._custom_field_data["member_connect_request_id"] = request_id  # pylint: disable=protected-access
+            tunnel._custom_field_data["member_connect_managed"] = True  # pylint: disable=protected-access
 
             # 10. Attach the pre-configured hub endpoint (endpoint_z).
             tunnel.endpoint_z = hub_endpoint
 
             # 11. Spoke VPNTunnelEndpoint (endpoint_a) — one protected prefix
             # association per entry in member_protected_prefixes.
-            spoke_role, _ = Role.objects.get_or_create(name="Spoke")
+            spoke_role = member_role or Role.objects.get_or_create(name="Spoke")[0]
             spoke_endpoint = VPNTunnelEndpoint.objects.create(
                 name=f"{member_name}-{loc_slug}",
                 role=spoke_role,
                 device=member_device,
                 source_ipaddress=member_ip,
+                vpn_profile=profile,
+                tenant=tenant,
             )
             for cidr in member_prefix_cidrs:
                 spoke_endpoint.protected_prefixes.add(_get_or_create_prefix(cidr, member_name, tenant=tenant))
@@ -566,6 +594,10 @@ def _config_summary(tunnel):
     return {
         "hub_peer_ip": str(hub.source_ipaddress.address.ip) if hub.source_ipaddress else None,
         "hub_protected_prefixes": hub_prefixes,
+        # Encapsulation as modeled on the tunnel; protocol is always ESP for the
+        # IPsec transforms this flow builds. Both are surfaced to the member.
+        "encapsulation": tunnel.encapsulation or "IPsec-Tunnel",
+        "protocol": "ESP",
         "phase1": phase1,
         "phase2": {
             "encryption": params["ipsec_encryption"],

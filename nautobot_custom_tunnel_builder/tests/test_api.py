@@ -196,6 +196,19 @@ def _valid_payload(device, template_profile, request_id=None):
     }
 
 
+def _ensure_member_role():
+    """The 'Member' role, scoped to the VPN objects the flow stamps with it.
+
+    Mirrors what the portal bootstrap guarantees in a real deployment.
+    """
+    from django.contrib.contenttypes.models import ContentType  # pylint: disable=import-outside-toplevel
+
+    role, _ = Role.objects.get_or_create(name="Member")
+    for model in (VPN, VPNTunnel, VPNTunnelEndpoint):
+        role.content_types.add(ContentType.objects.get_for_model(model))
+    return role
+
+
 class PortalTunnelTenancyTest(APITestCase):  # pylint: disable=too-many-ancestors
     """A supplied tenant is assigned to the objects the flow creates, and each
     member gets its own IPAM namespace."""
@@ -209,6 +222,7 @@ class PortalTunnelTenancyTest(APITestCase):  # pylint: disable=too-many-ancestor
         LocationType.objects.get_or_create(name="Site")
         _create_hub_endpoint(cls.device)
         _ensure_vpntunnel_statuses()
+        _ensure_member_role()
         cls.tenant = Tenant.objects.create(name="Acme Corp Tenant")
 
     def setUp(self):
@@ -229,6 +243,8 @@ class PortalTunnelTenancyTest(APITestCase):  # pylint: disable=too-many-ancestor
         self.assertEqual(tunnel.tenant, self.tenant)
         self.assertEqual(tunnel.vpn.tenant, self.tenant)
         self.assertEqual(tunnel.vpn_profile.tenant, self.tenant)
+        # The spoke endpoint is created by the flow, so it carries the tenant too.
+        self.assertEqual(tunnel.endpoint_a.tenant, self.tenant)
         member_device = Device.objects.get(name="member-acme-corp-jackson-ms")
         self.assertEqual(member_device.tenant, self.tenant)
 
@@ -405,6 +421,7 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
         # Pre-configure hub endpoint with protected prefix (required before portal can provision)
         _create_hub_endpoint(cls.device)
         _ensure_vpntunnel_statuses()
+        _ensure_member_role()
 
     def setUp(self):
         super().setUp()
@@ -449,6 +466,16 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
         self.assertEqual(tunnel.vpn, vpn)
         self.assertIn("Acme Corp - Jackson, MS - 3000", tunnel.name)
 
+        # Enrichment: Member Connect fills in the modeling fields it can.
+        self.assertEqual(vpn.role.name, "Member")
+        self.assertEqual(vpn.vpn_profile, tunnel.vpn_profile)
+        self.assertTrue(vpn._custom_field_data.get("member_connect_managed"))  # pylint: disable=protected-access
+        self.assertEqual(tunnel.role.name, "Member")
+        self.assertEqual(tunnel.encapsulation, "IPsec-Tunnel")
+        self.assertTrue(tunnel._custom_field_data.get("member_connect_managed"))  # pylint: disable=protected-access
+        self.assertEqual(tunnel.endpoint_a.role.name, "Member")
+        self.assertEqual(tunnel.endpoint_a.vpn_profile, tunnel.vpn_profile)
+
         # Verify VPNProfile cloned (not the template)
         profile = tunnel.vpn_profile
         self.assertNotEqual(profile.pk, self.template_profile.pk)
@@ -487,6 +514,22 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
 
         # Verify 1Password was called
         _mock_op.assert_called_once()
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-no-role")
+    def test_provisioning_succeeds_when_member_role_unscoped(self, _mock_op):
+        """Provisioning must not depend on the content-type bootstrap having run:
+        an unscoped Member role is still assigned to the objects it stamps."""
+        Role.objects.get(name="Member").content_types.clear()
+        payload = _valid_payload(self.device, self.template_profile)
+        payload["remote_peer_ip"] = "203.0.113.77"
+        response = self._post(PORTAL_REQUEST_URL, payload)
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        tunnel = VPNTunnel.objects.get(pk=response.json()["tunnel_id"])
+        self.assertEqual(tunnel.role.name, "Member")
+        self.assertEqual(tunnel.vpn.role.name, "Member")
+        self.assertEqual(tunnel.encapsulation, "IPsec-Tunnel")
+        self.assertTrue(tunnel._custom_field_data.get("member_connect_managed"))  # pylint: disable=protected-access
 
     @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
     def test_202_response_pins_full_contract_body(self, _mock_op):
@@ -819,6 +862,9 @@ class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
         self.assertIsNotNone(summary, "config_summary missing from Provisioned response")
         self.assertEqual(summary["hub_peer_ip"], "10.1.1.1")
         self.assertEqual(summary["hub_protected_prefixes"], ["10.100.0.0/24"])
+        # Encapsulation + protocol are presented to the member alongside the phases.
+        self.assertEqual(summary["encapsulation"], "IPsec-Tunnel")
+        self.assertEqual(summary["protocol"], "ESP")
         p1, p2 = summary["phase1"], summary["phase2"]
         self.assertEqual(p1["ike_version"], "ikev2")
         for key in ("encryption", "integrity", "dh_group", "lifetime"):
