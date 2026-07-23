@@ -271,6 +271,26 @@ class PortalJobSSHTest(TestCase):
 
     @patch(SECRET_GET_VALUE_PATH, return_value="TestPSK-Secret-123!")
     @patch(CONNECT_HANDLER_PATH)
+    def test_every_protected_host_gets_its_own_permit_line(self, mock_connect, _mock_secret):
+        """A spoke with multiple protected hosts yields one ACL permit per host."""
+        members_ns = Namespace.objects.get(name="Members")
+        extra, _ = Prefix.objects.get_or_create(
+            prefix="192.168.1.9/32",
+            namespace=members_ns,
+            defaults={"status": Status.objects.get_for_model(Prefix).get(name="Active")},
+        )
+        self.tunnel.endpoint_a.protected_prefixes.add(extra)
+
+        conn = self._run_job(mock_connect, _mock_secret)
+
+        commands = conn.send_config_set.call_args[0][0]
+        permits = [c for c in commands if c.strip().startswith("permit ip")]
+        self.assertEqual(len(permits), 2, permits)
+        self.assertTrue(any("192.168.1.0 0.0.0.255" in c for c in permits), permits)
+        self.assertTrue(any("192.168.1.9 0.0.0.0" in c for c in permits), permits)
+
+    @patch(SECRET_GET_VALUE_PATH, return_value="TestPSK-Secret-123!")
+    @patch(CONNECT_HANDLER_PATH)
     def test_psk_in_commands_but_not_logged(self, mock_connect, _mock_secret):
         """PSK appears in commands sent to device but is redacted in logs."""
         with self.assertLogs("test.portal_job", level="DEBUG") as log_ctx:
