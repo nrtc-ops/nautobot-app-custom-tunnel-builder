@@ -5,7 +5,11 @@ from unittest.mock import patch
 
 from django.test import TestCase, override_settings
 
-from nautobot_custom_tunnel_builder.onepassword_utils import _dev_bypass_enabled, get_secret_provider_params
+from nautobot_custom_tunnel_builder.onepassword_utils import (
+    _dev_bypass_enabled,
+    _psk_item_note,
+    get_secret_provider_params,
+)
 
 LOGGER_NAME = "nautobot_custom_tunnel_builder.onepassword_utils"
 
@@ -50,3 +54,32 @@ class SecretProviderParamsTest(TestCase):
         provider, params = get_secret_provider_params("dev-item")
         self.assertEqual(provider, "text-file")
         self.assertIn("path", params)
+
+
+class PskItemNoteTest(TestCase):
+    """The 1Password item note carries operator context: who/where the PSK is
+    for, the member peer IP, the hub device, crypto sequence, and the request
+    id — so an engineer finding the item does not need to open Nautobot."""
+
+    def test_note_includes_operator_context(self):
+        note = _psk_item_note(
+            member="Fox Islands Electric (fox-islands)",
+            location="North Haven, ME",
+            remote_peer_ip="203.0.113.71",
+            hub_device="fake-cisco",
+            sequence=3090,
+            request_id="mc-req-abc123",
+        )
+        assert "Nautobot Custom Tunnel Builder" in note
+        assert "Fox Islands Electric (fox-islands)" in note
+        assert "North Haven, ME" in note
+        assert "Member peer IP: 203.0.113.71" in note
+        assert "fake-cisco" in note
+        assert "3090" in note
+        assert "mc-req-abc123" in note
+
+    def test_note_omits_blank_fields(self):
+        note = _psk_item_note(member="X (x)", remote_peer_ip="", hub_device=None, sequence=3000)
+        assert "Member peer IP" not in note  # blank omitted
+        assert "NRTC hub device" not in note  # None omitted
+        assert "3000" in note

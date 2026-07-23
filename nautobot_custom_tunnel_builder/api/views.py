@@ -456,7 +456,20 @@ class PortalTunnelRequestView(APIView):
             # NOTE: external call inside transaction.atomic() — orphaned items are
             # identifiable by name pattern vpn-psk-nrtc-ms-{member}-{loc_slug}-{seq}.
             # TODO: two-phase commit (logged fast-follow).
-            op_item_id = store_psk_in_1password(psk, member_name, loc_slug, next_seq)
+            op_item_id = store_psk_in_1password(
+                psk,
+                member_name,
+                loc_slug,
+                next_seq,
+                note_context={
+                    "member": f"{member_display} ({member_name})",
+                    "location": display_location,
+                    "remote_peer_ip": remote_peer_ip,
+                    "hub_device": device.name,
+                    "sequence": next_seq,
+                    "request_id": request_id,
+                },
+            )
 
             # 7. Nautobot Secret + SecretsGroup for this tunnel's PSK
             _secret_provider, _secret_params = get_secret_provider_params(op_item_id)
