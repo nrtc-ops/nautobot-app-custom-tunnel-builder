@@ -242,7 +242,7 @@ class PortalTunnelTenancyTest(APITestCase):  # pylint: disable=too-many-ancestor
 
         ns = Namespace.objects.get(name="member-acme-corp")
         self.assertEqual(ns.tenant, self.tenant)
-        member_ip_prefix = ns.prefixes.filter(prefix="203.0.113.0/24").first()
+        member_ip_prefix = ns.prefixes.filter(prefix="203.0.113.50/32").first()
         self.assertIsNotNone(member_ip_prefix, "member IP parent prefix should live in the member namespace")
         self.assertIsNotNone(ns.prefixes.filter(prefix="192.168.1.0/24").first())
 
@@ -1009,7 +1009,7 @@ class EndToEndConfigGenerationTest(APITestCase):  # pylint: disable=too-many-anc
             vpn_profile=vpn_profile,
             remote_peer_ip=remote_peer_ip,
             local_network_cidr=local_network_cidr,
-            protected_network_cidr=protected_network_cidr,
+            protected_network_cidrs=[protected_network_cidr],
             crypto_map_name=crypto_map_name,
             sequence=sequence,
         )
@@ -1089,7 +1089,7 @@ class EndToEndConfigGenerationTest(APITestCase):  # pylint: disable=too-many-anc
             vpn_profile=profile2,
             remote_peer_ip="203.0.113.51",
             local_network_cidr=str(hub2.protected_prefixes.first().prefix),
-            protected_network_cidr=str(tunnel2.endpoint_a.protected_prefixes.first().prefix),
+            protected_network_cidrs=[str(p.prefix) for p in tunnel2.endpoint_a.protected_prefixes.all()],
             crypto_map_name=hub2._custom_field_data.get(  # pylint: disable=protected-access
                 "custom_tunnel_builder_crypto_map_name", "VPN"
             ),

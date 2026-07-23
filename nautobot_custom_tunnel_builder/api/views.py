@@ -97,11 +97,12 @@ def _get_or_create_member_device(member_name, location_slug, remote_peer_ip, loc
     # Nautobot 3.x requires a parent Prefix for every IPAddress
     members_ns = _member_namespace(member_name, tenant)
     prefix_status = Status.objects.get_for_model(Prefix).get(name="Active")
-    # Create a /24 parent prefix for the member's IP
+    # Create a /32 parent prefix scoped to just this member's peer IP — we do
+    # not model the member's surrounding /24, only the single host we peer with.
     import ipaddress as ipaddresslib  # pylint: disable=import-outside-toplevel
 
     ip_obj = ipaddresslib.ip_address(remote_peer_ip)
-    parent_network = ipaddresslib.ip_network(f"{ip_obj}/24", strict=False)
+    parent_network = ipaddresslib.ip_network(f"{ip_obj}/32", strict=False)
     Prefix.objects.get_or_create(
         prefix=str(parent_network),
         namespace=members_ns,
@@ -542,7 +543,7 @@ def _config_summary(tunnel):
             vpn_profile=profile,
             remote_peer_ip=str(spoke.source_ipaddress.address.ip) if spoke and spoke.source_ipaddress else "",
             local_network_cidr=hub_prefixes[0] if hub_prefixes else "",
-            protected_network_cidr="",
+            protected_network_cidrs=[],
             crypto_map_name="",
             sequence=sequence,
         )

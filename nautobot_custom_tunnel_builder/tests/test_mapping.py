@@ -42,7 +42,7 @@ def _make_profile(phase1=None, phase2=None):
 _COMMON_KWARGS = {
     "remote_peer_ip": "203.0.113.1",
     "local_network_cidr": "192.168.1.0/24",
-    "protected_network_cidr": "10.0.0.0/24",
+    "protected_network_cidrs": ["10.0.0.0/24"],
     "crypto_map_name": "CRYPTO-MAP",
     "sequence": 10,
 }
@@ -56,7 +56,7 @@ class ProfileToConfigParamsIKEv2Test(TestCase):
         self.assertEqual(result["ike_version"], "ikev2")
         self.assertEqual(result["remote_peer_ip"], "203.0.113.1")
         self.assertEqual(result["local_network"], "192.168.1.0/24")
-        self.assertEqual(result["remote_network"], "10.0.0.0/24")
+        self.assertEqual(result["remote_networks"], ["10.0.0.0/24"])
         self.assertEqual(result["ikev2_encryption"], "aes-cbc-256")
         self.assertEqual(result["ikev2_integrity"], "sha256")
         self.assertEqual(result["ike_dh_group"], "19")
@@ -113,3 +113,17 @@ class ProfileToConfigParamsEdgeCasesTest(TestCase):
         with self.assertRaises(ValueError) as ctx:
             profile_to_config_params(vpn_profile=profile, **_COMMON_KWARGS)
         self.assertIn("Phase 2", str(ctx.exception))
+
+
+class ProfileToConfigParamsRemoteNetworksTest(TestCase):
+    """Mapping carries every protected host through as remote_networks."""
+
+    def test_multiple_protected_hosts_passed_through(self):
+        kwargs = dict(_COMMON_KWARGS)
+        kwargs.pop("protected_network_cidrs")
+        result = profile_to_config_params(
+            vpn_profile=_make_profile(),
+            protected_network_cidrs=["10.0.0.5/32", "10.0.0.6/32"],
+            **kwargs,
+        )
+        self.assertEqual(result["remote_networks"], ["10.0.0.5/32", "10.0.0.6/32"])

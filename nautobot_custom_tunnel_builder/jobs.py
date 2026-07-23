@@ -166,7 +166,9 @@ def build_iosxe_policy_config(data: dict) -> list[str]:
     ipsec_lifetime = data["ipsec_lifetime"]
 
     local_net, local_wildcard = _cidr_to_net_wildcard(data["local_network"])
-    remote_net, remote_wildcard = _cidr_to_net_wildcard(data["remote_network"])
+    # Prefer the plural `remote_networks` (one ACL permit per protected host);
+    # fall back to the legacy singular `remote_network` for the operator-UI path.
+    remote_networks = data.get("remote_networks") or [data["remote_network"]]
 
     # Phase 1: IKEv1 (ISAKMP) or IKEv2
     if ike_version == "ikev1":
@@ -174,9 +176,17 @@ def build_iosxe_policy_config(data: dict) -> list[str]:
     else:
         commands = _build_ikev2_commands(data)
 
-    # Crypto ACL (interesting traffic)
+    # Crypto ACL (interesting traffic) — one permit line per protected host,
+    # de-duplicated while preserving the order they were supplied.
     commands.append(f"ip access-list extended {acl_name}")
-    commands.append(f" permit ip {local_net} {local_wildcard} {remote_net} {remote_wildcard}")
+    seen_remotes = set()
+    for remote in remote_networks:
+        remote_net, remote_wildcard = _cidr_to_net_wildcard(remote)
+        key = (remote_net, remote_wildcard)
+        if key in seen_remotes:
+            continue
+        seen_remotes.add(key)
+        commands.append(f" permit ip {local_net} {local_wildcard} {remote_net} {remote_wildcard}")
     commands.append("exit")
 
     # IPsec Transform-Set (Phase 2)
@@ -643,14 +653,14 @@ class PortalBuildIpsecTunnel(Job):
         remote_peer_ip = str(spoke_endpoint.source_ipaddress.address.ip)
 
         hub_prefix = hub_endpoint.protected_prefixes.first()
-        spoke_prefix = spoke_endpoint.protected_prefixes.first()
+        spoke_prefixes = list(spoke_endpoint.protected_prefixes.all())
         if not hub_prefix:
             raise ValueError(f"Hub endpoint on tunnel '{tunnel.name}' has no protected prefix.")
-        if not spoke_prefix:
+        if not spoke_prefixes:
             raise ValueError(f"Spoke endpoint on tunnel '{tunnel.name}' has no protected prefix.")
 
         local_network_cidr = str(hub_prefix.prefix)
-        protected_network_cidr = str(spoke_prefix.prefix)
+        protected_network_cidrs = [str(p.prefix) for p in spoke_prefixes]
 
         # Read custom fields from VPNProfile and hub endpoint
         vpn_profile = tunnel.vpn_profile
@@ -673,7 +683,7 @@ class PortalBuildIpsecTunnel(Job):
             sequence,
             remote_peer_ip,
             local_network_cidr,
-            protected_network_cidr,
+            ",".join(protected_network_cidrs),
         )
 
         # 2. Retrieve PSK from the tunnel's SecretsGroup (stored in 1Password)
@@ -693,7 +703,7 @@ class PortalBuildIpsecTunnel(Job):
             vpn_profile=vpn_profile,
             remote_peer_ip=remote_peer_ip,
             local_network_cidr=local_network_cidr,
-            protected_network_cidr=protected_network_cidr,
+            protected_network_cidrs=protected_network_cidrs,
             crypto_map_name=crypto_map_name,
             sequence=sequence,
         )

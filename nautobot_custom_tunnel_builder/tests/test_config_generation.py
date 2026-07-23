@@ -296,3 +296,42 @@ class BuildIosxePolicyConfigOrderTest(TestCase):
         commands = build_iosxe_policy_config(_ikev2_data())
         match_idx = next(i for i, c in enumerate(commands) if c.strip().startswith("match address"))
         self.assertEqual(commands[match_idx + 1], "exit")
+
+
+# ---------------------------------------------------------------------------
+# build_iosxe_policy_config — multiple remote (member) hosts
+# ---------------------------------------------------------------------------
+
+
+class BuildConfigMultipleRemoteHostsTest(TestCase):
+    """The crypto ACL must permit every protected host, not just the first."""
+
+    def test_one_permit_line_per_remote_host(self):
+        data = _ikev2_data(remote_networks=["10.0.0.5/32", "10.0.0.6/32"])
+        data.pop("remote_network", None)
+        commands = build_iosxe_policy_config(data)
+        self.assertIn(" permit ip 192.168.1.0 0.0.0.255 10.0.0.5 0.0.0.0", commands)
+        self.assertIn(" permit ip 192.168.1.0 0.0.0.255 10.0.0.6 0.0.0.0", commands)
+
+    def test_permit_lines_deduped_preserving_order(self):
+        data = _ikev2_data(remote_networks=["10.0.0.5/32", "10.0.0.5/32", "10.0.0.6/32"])
+        data.pop("remote_network", None)
+        commands = build_iosxe_policy_config(data)
+        permits = [c for c in commands if c.strip().startswith("permit ip")]
+        self.assertEqual(
+            permits,
+            [
+                " permit ip 192.168.1.0 0.0.0.255 10.0.0.5 0.0.0.0",
+                " permit ip 192.168.1.0 0.0.0.255 10.0.0.6 0.0.0.0",
+            ],
+        )
+
+    def test_remote_networks_preferred_over_singular(self):
+        data = _ikev2_data(remote_networks=["10.9.9.9/32"])  # also has remote_network 10.0.0.0/24
+        commands = build_iosxe_policy_config(data)
+        permits = [c for c in commands if c.strip().startswith("permit ip")]
+        self.assertEqual(permits, [" permit ip 192.168.1.0 0.0.0.255 10.9.9.9 0.0.0.0"])
+
+    def test_singular_remote_network_still_supported(self):
+        commands = build_iosxe_policy_config(_ikev2_data())  # remote_network 10.0.0.0/24, no plural
+        self.assertIn(" permit ip 192.168.1.0 0.0.0.255 10.0.0.0 0.0.0.255", commands)

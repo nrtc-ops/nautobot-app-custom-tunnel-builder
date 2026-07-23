@@ -18,7 +18,7 @@ def profile_to_config_params(  # pylint: disable=too-many-locals,too-many-argume
     vpn_profile,
     remote_peer_ip: str,
     local_network_cidr: str,
-    protected_network_cidr: str,
+    protected_network_cidrs: list,
     crypto_map_name: str,
     sequence: int,
 ) -> dict:
@@ -28,7 +28,8 @@ def profile_to_config_params(  # pylint: disable=too-many-locals,too-many-argume
         vpn_profile: Nautobot VPNProfile model instance.
         remote_peer_ip: Remote peer IP address.
         local_network_cidr: Local network in CIDR notation.
-        protected_network_cidr: Remote (protected) network in CIDR notation.
+        protected_network_cidrs: Remote (member) protected hosts in CIDR
+            notation — one crypto-ACL permit line is rendered per entry.
         crypto_map_name: Name of the existing crypto map on the device.
         sequence: Crypto map sequence number for this tunnel.
 
@@ -62,7 +63,7 @@ def profile_to_config_params(  # pylint: disable=too-many-locals,too-many-argume
         "ike_version": ike_version,
         "remote_peer_ip": remote_peer_ip,
         "local_network": local_network_cidr,
-        "remote_network": protected_network_cidr,
+        "remote_networks": list(protected_network_cidrs),
         "crypto_map_name": crypto_map_name,
         "crypto_map_sequence": sequence,
         "crypto_acl_name": f"PORTAL-ACL-{sequence}",
