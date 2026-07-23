@@ -211,6 +211,10 @@ class PortalTunnelTenancyTest(APITestCase):  # pylint: disable=too-many-ancestor
         _ensure_vpntunnel_statuses()
         cls.tenant = Tenant.objects.create(name="Acme Corp Tenant")
 
+    def setUp(self):
+        super().setUp()
+        # Properly-permissioned portal service account (provisioning needs add).
+        self.add_permissions("vpn.add_vpntunnel")
     def _post(self, url, data=None):
         return self.client.post(url, data=data or {}, format="json", **self.header)
 
@@ -282,6 +286,10 @@ class UnauthenticatedAccessTest(TestCase):
 class PortalRequestValidationTest(APITestCase):  # pylint: disable=too-many-ancestors
     """Test validation on the portal-request endpoint."""
 
+    def setUp(self):
+        super().setUp()
+        # Properly-permissioned portal service account (provisioning needs add).
+        self.add_permissions("vpn.add_vpntunnel")
     def _post(self, url, data=None):
         """POST with auth header."""
         return self.client.post(url, data=data or {}, format="json", **self.header)
@@ -398,11 +406,27 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
         _create_hub_endpoint(cls.device)
         _ensure_vpntunnel_statuses()
 
+    def setUp(self):
+        super().setUp()
+        # Represents the properly-permissioned portal service account.
+        self.add_permissions("vpn.add_vpntunnel")
+
     def _post(self, url, data=None):
         return self.client.post(url, data=data or {}, format="json", **self.header)
 
     def _get(self, url):
         return self.client.get(url, **self.header)
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-noperm")
+    def test_build_requires_add_vpntunnel_permission(self, _mock_op):
+        """A token that can't add VPNTunnels cannot provision — no device config
+        push, no tunnel/PSK creation — even though it is authenticated."""
+        self.user.object_permissions.clear()
+        self.user.refresh_from_db()
+        payload = _valid_payload(self.device, self.template_profile)
+        response = self._post(PORTAL_REQUEST_URL, payload)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(VPNTunnel.objects.exists())
 
     @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
     def test_happy_path_creates_full_hierarchy(self, _mock_op):
@@ -722,9 +746,9 @@ class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
 
     def setUp(self):
         super().setUp()
-        # The portal service account holds view permission on VPNTunnel; the
-        # endpoint restricts by it, so grant it here to represent that account.
-        self.add_permissions("vpn.view_vpntunnel")
+        # The portal service account holds view + add on VPNTunnel; the status
+        # endpoint restricts by view and _post_tunnel provisions (needs add).
+        self.add_permissions("vpn.view_vpntunnel", "vpn.add_vpntunnel")
 
     def _get(self, url):
         return self.client.get(url, **self.header)
@@ -918,6 +942,10 @@ class EndToEndConfigGenerationTest(APITestCase):  # pylint: disable=too-many-anc
         _create_hub_endpoint(cls.device)
         _ensure_vpntunnel_statuses()
 
+    def setUp(self):
+        super().setUp()
+        # Properly-permissioned portal service account (provisioning needs add).
+        self.add_permissions("vpn.add_vpntunnel")
     def _post(self, url, data=None):
         return self.client.post(url, data=data or {}, format="json", **self.header)
 

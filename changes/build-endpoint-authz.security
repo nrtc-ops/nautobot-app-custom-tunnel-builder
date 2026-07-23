@@ -1,0 +1,1 @@
+Hardened the portal-request (build) endpoint: it now requires the Nautobot vpn.add_vpntunnel permission, not just authentication. A token that cannot add VPNTunnels gets 403 instead of provisioning objects, generating a PSK, and pushing crypto config to a device. Prod: grant the portal service account vpn.add_vpntunnel alongside vpn.view_vpntunnel.

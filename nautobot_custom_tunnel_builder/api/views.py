@@ -229,6 +229,17 @@ class PortalTunnelRequestView(APIView):
 
     def post(self, request):  # pylint: disable=too-many-locals,too-many-return-statements
         """Validate, create VPN object hierarchy, enqueue build job, return 202."""
+        # Authenticated is not enough: provisioning creates objects and pushes
+        # crypto config to a real device. Gate on the Nautobot add permission
+        # for VPNTunnel — the representative capability for "provision a
+        # tunnel." has_perm() with no object is True for a superuser or any
+        # ObjectPermission granting add on VPNTunnel, False otherwise.
+        if not request.user.has_perm("vpn.add_vpntunnel"):
+            return Response(
+                {"detail": "You do not have permission to provision tunnels."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         serializer = PortalTunnelRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
