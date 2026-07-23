@@ -38,14 +38,14 @@ services:
   # container is readable by the worker container.
   nautobot:
     environment:
-      OP_DEV_BYPASS: "true"
+      OP_DEV_BYPASS: "${OP_DEV_BYPASS:-true}"
     volumes:
       - "dev-psk:/tmp/nautobot-dev-psk"
       - "fake-cisco-output:/fake-cisco-output:ro"
 
   worker:
     environment:
-      OP_DEV_BYPASS: "true"
+      OP_DEV_BYPASS: "${OP_DEV_BYPASS:-true}"
     volumes:
       - "dev-psk:/tmp/nautobot-dev-psk"
 

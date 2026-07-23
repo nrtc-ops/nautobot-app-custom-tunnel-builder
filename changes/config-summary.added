@@ -1,0 +1,1 @@
+Added a non-secret config_summary block (hub peer IP, hub protected prefixes, phase 1/2 parameters) to Provisioned tunnel-status responses, derived via profile_to_config_params so it cannot drift from the pushed config. seed-e2e now also creates the Standard-IKEv1-AES256 legacy template.

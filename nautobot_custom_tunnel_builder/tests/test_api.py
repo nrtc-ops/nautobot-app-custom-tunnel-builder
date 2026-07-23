@@ -18,6 +18,7 @@ from nautobot.dcim.models import (
     Platform,
 )
 from nautobot.extras.models import Role, Status
+from nautobot.tenancy.models import Tenant
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 from nautobot.vpn.models import (
     VPN,
@@ -195,6 +196,65 @@ def _valid_payload(device, template_profile, request_id=None):
     }
 
 
+class PortalTunnelTenancyTest(APITestCase):  # pylint: disable=too-many-ancestors
+    """A supplied tenant is assigned to the objects the flow creates, and each
+    member gets its own IPAM namespace."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.device = _create_test_device()
+        cls.template_profile = _create_template_vpn_profile()
+        manufacturer, _ = Manufacturer.objects.get_or_create(name="Generic")
+        DeviceType.objects.get_or_create(model="Member VPN Endpoint", manufacturer=manufacturer)
+        LocationType.objects.get_or_create(name="Site")
+        _create_hub_endpoint(cls.device)
+        _ensure_vpntunnel_statuses()
+        cls.tenant = Tenant.objects.create(name="Acme Corp Tenant")
+
+    def setUp(self):
+        super().setUp()
+        # Properly-permissioned portal service account (provisioning needs add).
+        self.add_permissions("vpn.add_vpntunnel")
+    def _post(self, url, data=None):
+        return self.client.post(url, data=data or {}, format="json", **self.header)
+
+    @patch(OP_MOCK_PATH, return_value="op-tenancy")
+    def test_supplied_tenant_lands_on_created_objects(self, _mock_op):
+        payload = _valid_payload(self.device, self.template_profile)
+        payload["tenant"] = str(self.tenant.pk)
+        response = self._post(PORTAL_REQUEST_URL, payload)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+
+        tunnel = VPNTunnel.objects.get(pk=response.json()["tunnel_id"])
+        self.assertEqual(tunnel.tenant, self.tenant)
+        self.assertEqual(tunnel.vpn.tenant, self.tenant)
+        self.assertEqual(tunnel.vpn_profile.tenant, self.tenant)
+        member_device = Device.objects.get(name="member-acme-corp-jackson-ms")
+        self.assertEqual(member_device.tenant, self.tenant)
+
+    @patch(OP_MOCK_PATH, return_value="op-tenancy")
+    def test_per_member_namespace_created_with_tenant(self, _mock_op):
+        from nautobot.ipam.models import Namespace  # pylint: disable=import-outside-toplevel
+
+        payload = _valid_payload(self.device, self.template_profile)
+        payload["tenant"] = str(self.tenant.pk)
+        self._post(PORTAL_REQUEST_URL, payload)
+
+        ns = Namespace.objects.get(name="member-acme-corp")
+        self.assertEqual(ns.tenant, self.tenant)
+        member_ip_prefix = ns.prefixes.filter(prefix="203.0.113.0/24").first()
+        self.assertIsNotNone(member_ip_prefix, "member IP parent prefix should live in the member namespace")
+        self.assertIsNotNone(ns.prefixes.filter(prefix="192.168.1.0/24").first())
+
+    @patch(OP_MOCK_PATH, return_value="op-tenancy")
+    def test_tenant_omitted_keeps_legacy_behavior(self, _mock_op):
+        payload = _valid_payload(self.device, self.template_profile)
+        response = self._post(PORTAL_REQUEST_URL, payload)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        tunnel = VPNTunnel.objects.get(pk=response.json()["tunnel_id"])
+        self.assertIsNone(tunnel.tenant)
+
+
 # ---------------------------------------------------------------------------
 # Unauthenticated access tests (use plain APIClient, no token)
 # ---------------------------------------------------------------------------
@@ -226,6 +286,10 @@ class UnauthenticatedAccessTest(TestCase):
 class PortalRequestValidationTest(APITestCase):  # pylint: disable=too-many-ancestors
     """Test validation on the portal-request endpoint."""
 
+    def setUp(self):
+        super().setUp()
+        # Properly-permissioned portal service account (provisioning needs add).
+        self.add_permissions("vpn.add_vpntunnel")
     def _post(self, url, data=None):
         """POST with auth header."""
         return self.client.post(url, data=data or {}, format="json", **self.header)
@@ -342,11 +406,27 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
         _create_hub_endpoint(cls.device)
         _ensure_vpntunnel_statuses()
 
+    def setUp(self):
+        super().setUp()
+        # Represents the properly-permissioned portal service account.
+        self.add_permissions("vpn.add_vpntunnel")
+
     def _post(self, url, data=None):
         return self.client.post(url, data=data or {}, format="json", **self.header)
 
     def _get(self, url):
         return self.client.get(url, **self.header)
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-noperm")
+    def test_build_requires_add_vpntunnel_permission(self, _mock_op):
+        """A token that can't add VPNTunnels cannot provision — no device config
+        push, no tunnel/PSK creation — even though it is authenticated."""
+        self.user.object_permissions.clear()
+        self.user.refresh_from_db()
+        payload = _valid_payload(self.device, self.template_profile)
+        response = self._post(PORTAL_REQUEST_URL, payload)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(VPNTunnel.objects.exists())
 
     @patch(OP_MOCK_PATH, return_value="fake-op-item-id-12345")
     def test_happy_path_creates_full_hierarchy(self, _mock_op):
@@ -664,8 +744,25 @@ class PortalTunnelCreationTest(APITestCase):  # pylint: disable=too-many-ancesto
 class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
     """Test the tunnel-status endpoint, including PSK-once semantics."""
 
+    def setUp(self):
+        super().setUp()
+        # The portal service account holds view + add on VPNTunnel; the status
+        # endpoint restricts by view and _post_tunnel provisions (needs add).
+        self.add_permissions("vpn.view_vpntunnel", "vpn.add_vpntunnel")
+
     def _get(self, url):
         return self.client.get(url, **self.header)
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-noperm")
+    def test_token_without_view_permission_gets_404(self, _mock_op):
+        """A tunnel is invisible to a token lacking vpn.view_vpntunnel — no
+        status or PSK leak across the flat token boundary."""
+        tunnel_id = self._post_tunnel("noperm-member", "203.0.113.61")
+        self.user.object_permissions.clear()
+        self.user.refresh_from_db()
+        response = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertNotIn("pre_shared_key", response.json())
 
     def _post_tunnel(self, member_name, peer_ip):
         """Provision a tunnel via the portal API; returns its tunnel_id (status Planned)."""
@@ -710,6 +807,32 @@ class TunnelStatusTest(APITestCase):  # pylint: disable=too-many-ancestors
         self.assertEqual(data["status"], "Provisioned")
         self.assertIn("pre_shared_key", data)
         self.assertEqual(data["pre_shared_key"], "TestPSKReturnedOnce!")
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-summary")
+    @patch("nautobot.extras.models.Secret.get_value", return_value="SummaryPSK!")
+    def test_provisioned_tunnel_includes_config_summary(self, _mock_get_value, _mock_op):
+        """Provisioned status responses carry the non-secret config_summary block."""
+        tunnel_id = self._post_tunnel("summary-member", "203.0.113.90")
+        self._activate(tunnel_id)
+        data = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id)).json()
+        summary = data.get("config_summary")
+        self.assertIsNotNone(summary, "config_summary missing from Provisioned response")
+        self.assertEqual(summary["hub_peer_ip"], "10.1.1.1")
+        self.assertEqual(summary["hub_protected_prefixes"], ["10.100.0.0/24"])
+        p1, p2 = summary["phase1"], summary["phase2"]
+        self.assertEqual(p1["ike_version"], "ikev2")
+        for key in ("encryption", "integrity", "dh_group", "lifetime"):
+            self.assertIn(key, p1)
+        for key in ("encryption", "integrity", "lifetime"):
+            self.assertIn(key, p2)
+
+    @patch(OP_MOCK_PATH, return_value="fake-op-item-id-summary")
+    @patch("nautobot.extras.models.Secret.get_value", return_value="SummaryPSK!")
+    def test_planned_tunnel_has_no_config_summary(self, _mock_get_value, _mock_op):
+        """Config summary only appears once the tunnel is provisioned."""
+        tunnel_id = self._post_tunnel("summary-planned-member", "203.0.113.91")
+        data = self._get(TUNNEL_STATUS_URL_TEMPLATE.format(tunnel_id)).json()
+        self.assertNotIn("config_summary", data)
 
     @patch(OP_MOCK_PATH, return_value="fake-op-item-id-psk-test")
     @patch("nautobot.extras.models.Secret.get_value", return_value="TestPSKReturnedOnce!")
@@ -819,6 +942,10 @@ class EndToEndConfigGenerationTest(APITestCase):  # pylint: disable=too-many-anc
         _create_hub_endpoint(cls.device)
         _ensure_vpntunnel_statuses()
 
+    def setUp(self):
+        super().setUp()
+        # Properly-permissioned portal service account (provisioning needs add).
+        self.add_permissions("vpn.add_vpntunnel")
     def _post(self, url, data=None):
         return self.client.post(url, data=data or {}, format="json", **self.header)
 

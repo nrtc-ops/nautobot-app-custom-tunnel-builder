@@ -3,6 +3,7 @@
 import ipaddress
 import re
 
+from nautobot.tenancy.models import Tenant
 from nautobot.vpn.models import VPNProfile
 from rest_framework import serializers
 
@@ -53,6 +54,13 @@ class PortalTunnelRequestSerializer(serializers.Serializer):  # pylint: disable=
     template_vpn_profile = serializers.PrimaryKeyRelatedField(
         queryset=VPNProfile.objects.all(),
         help_text="UUID of the template VPN profile to clone.",
+    )
+
+    tenant = serializers.PrimaryKeyRelatedField(
+        queryset=Tenant.objects.all(),
+        required=False,
+        allow_null=True,
+        help_text="UUID of the member's Nautobot tenant; assigned to every object the flow creates.",
     )
 
     remote_peer_ip = serializers.IPAddressField(

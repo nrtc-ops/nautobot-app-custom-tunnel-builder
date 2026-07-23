@@ -7,7 +7,7 @@ Run inside the nautobot container:
 Creates (get_or_create throughout — safe to re-run):
   - Hub Device "fake-cisco" (Cisco IOS-XE, primary IPv4 172.18.0.100/32 — the
     pinned address of the fake-cisco container in docker-compose.fake-cisco.yml)
-  - Template VPNProfile "Standard-IKEv2-AES256" + Phase 1/2 policies + assignments
+  - Template VPNProfiles "Standard-IKEv2-AES256" and "Standard-IKEv1-AES256"\n    with Phase 1/2 policies + assignments
   - Hub VPNTunnelEndpoint (device + role "Hub") with protected prefix + crypto map CF
   - "Planned", "Provisioned", "Decommissioning" statuses mapped to VPNTunnel
   - PortalBuildIpsecTunnel Job row enabled (disabled by default on a fresh DB;
@@ -41,6 +41,7 @@ HUB_IP = "172.18.0.100/32"  # pinned in docker-compose.fake-cisco.yml
 HUB_PARENT_PREFIX = "172.18.0.0/16"  # the compose overlay's docker subnet
 HUB_PROTECTED_PREFIX = "10.100.0.0/24"
 TEMPLATE_PROFILE_NAME = "Standard-IKEv2-AES256"
+TEMPLATE_PROFILE_IKEV1_NAME = "Standard-IKEv1-AES256"
 SERVICE_ACCOUNT = "portal-svc"
 
 
@@ -129,6 +130,44 @@ def _seed_template_profile():
     profile, _ = VPNProfile.objects.get_or_create(
         name=TEMPLATE_PROFILE_NAME,
         defaults={"description": "Template profile cloned per portal tunnel."},
+    )
+    VPNProfilePhase1PolicyAssignment.objects.get_or_create(
+        vpn_profile=profile,
+        vpn_phase1_policy=phase1,
+        defaults={"weight": 100},
+    )
+    VPNProfilePhase2PolicyAssignment.objects.get_or_create(
+        vpn_profile=profile,
+        vpn_phase2_policy=phase2,
+        defaults={"weight": 100},
+    )
+    return profile
+
+
+def _seed_ikev1_template_profile():
+    # Legacy-compatibility template: members pick this in the wizard only when
+    # their gear cannot do IKEv2. DH group 14 — v1 gear rarely does ECP curves.
+    phase1, _ = VPNPhase1Policy.objects.get_or_create(
+        name="Standard-IKEv1-Phase1",
+        defaults={
+            "ike_version": "IKEv1",
+            "encryption_algorithm": ["AES-256-CBC"],
+            "integrity_algorithm": ["SHA256"],
+            "dh_group": ["14"],
+            "lifetime_seconds": 86400,
+        },
+    )
+    phase2, _ = VPNPhase2Policy.objects.get_or_create(
+        name="Standard-AES256-Phase2",
+        defaults={
+            "encryption_algorithm": ["AES-256-CBC"],
+            "integrity_algorithm": ["SHA256"],
+            "lifetime": 3600,
+        },
+    )
+    profile, _ = VPNProfile.objects.get_or_create(
+        name=TEMPLATE_PROFILE_IKEV1_NAME,
+        defaults={"description": "IKEv1 legacy template profile cloned per portal tunnel."},
     )
     VPNProfilePhase1PolicyAssignment.objects.get_or_create(
         vpn_profile=profile,
@@ -241,6 +280,8 @@ def _main():
     print(f"  hub device:       {device.name}  {device.pk}")
     profile = _seed_template_profile()
     print(f"  template profile: {profile.name}  {profile.pk}")
+    ikev1_profile = _seed_ikev1_template_profile()
+    print(f"  ikev1 template:   {ikev1_profile.name}  {ikev1_profile.pk}")
     _seed_hub_endpoint(device, global_ns)
     print(f"  hub endpoint:     device={device.name} role=Hub prefix={HUB_PROTECTED_PREFIX}")
     _seed_tunnel_statuses()

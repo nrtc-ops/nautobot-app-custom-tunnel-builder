@@ -34,6 +34,13 @@ onepassword-sdk = ">=0.3.0,<1.0.0"
 netutils = { version = ">=1.0.0", optional = true }
 
 [tool.poetry.group.dev.dependencies]
+# Prod installs this alongside Nautobot to register the `one-password` secrets
+# provider that resolves portal PSKs (get_value() on the tunnel's Secret). Dev
+# needs it too so the real read path — not just the OP_DEV_BYPASS text-file
+# provider — is exercised locally. Only the 4.x line supports Nautobot 3.x
+# (`nautobot >=3.0.0,<4.0.0`); the newest PyPI release (3.2.0) is Nautobot-2.x
+# only, so we install 4.x from git until NTC publishes it to PyPI.
+nautobot-secrets-providers = { git = "https://github.com/nautobot/nautobot-app-secrets-providers.git", branch = "develop", extras = ["one-password"] }
 coverage = "*"
 django-debug-toolbar = "*"
 invoke = "*"
