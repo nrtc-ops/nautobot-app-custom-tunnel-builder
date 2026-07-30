@@ -21,6 +21,7 @@ The fix: use Nautobot's VPN hierarchy properly, eliminate redundant custom field
 ## Status Quo
 
 Current `PortalTunnelRequestView.post()` creates:
+
 - 1 VPNTunnel with 7 custom field keys in `_custom_field_data` (crypto_map_sequence, remote_peer_ip, local_network_cidr, protected_network_cidr, psk_retrieval_token, psk_retrieved, psk_encrypted)
 - 1 VPNTunnelEndpoint (hub) with `source_ip_address` set
 - 1 VPNTunnelEndpoint (spoke) with nothing set (no source IP, no protected prefixes)
@@ -137,6 +138,7 @@ PSK retrieval fields use `advanced_ui=True` to hide from the primary detail tab.
 PSK is stored in 1Password (already configured as a Nautobot secrets backend), not in custom fields. This gives other teams direct 1Password access to member PSKs.
 
 **Write flow (at tunnel creation time):**
+
 1. Generate PSK (`secrets.token_urlsafe(32)`)
 2. Create item in 1Password via `onepassword-sdk` (v0.3.0) — service account token + vault UUID via env vars (`OP_SERVICE_ACCOUNT_TOKEN`, `OP_VAULT_UUID`). Name: matches tunnel naming convention.
 3. Create Nautobot `Secret` object referencing the 1Password item by vault/item identifiers
@@ -171,6 +173,7 @@ created_item = await op_client.items.create(ItemCreateParams(
 SDK is async — use `asyncio.run()` to bridge from synchronous Nautobot code.
 
 **Read flow (portal PSK retrieval):**
+
 1. Check `psk_retrieved` CF on VPNProfile — if True, return 410 Gone
 2. Read PSK from `VPNProfile.secrets_group` → Secret → 1Password backend
 3. Set `psk_retrieved = True`
@@ -240,6 +243,7 @@ Example for Acme Corp in Jackson, MS with first tunnel:
 ### Duplicate Detection (revised)
 
 Instead of querying `_custom_field_data__remote_peer_ip`, query native fields:
+
 - Find VPNTunnelEndpoints where `source_ip_address` matches the member's remote IP
 - That are spoke endpoints on tunnels under the same VPN (member+location)
 - With matching protected_prefixes on both hub and spoke
@@ -247,6 +251,7 @@ Instead of querying `_custom_field_data__remote_peer_ip`, query native fields:
 ### Job Refactor
 
 `PortalBuildIpsecTunnel.run()` reads parameters from native objects:
+
 - `remote_peer_ip` from spoke endpoint's `source_ip_address`
 - `local_network_cidr` from hub endpoint's `protected_prefixes` (first Prefix's network string)
 - `protected_network_cidr` from spoke endpoint's `protected_prefixes` (first Prefix's network string)
